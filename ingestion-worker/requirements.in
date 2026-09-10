@@ -1,0 +1,11 @@
+# Direct runtime dependencies verified on PyPI, 2026-09-10.
+# Worker reuses app/ code copied from api/ at build time (see Dockerfile), so it
+# needs the same DB/embedding/chunking dependencies plus arq for the queue.
+arq==0.28.0
+psycopg[binary,pool]==3.3.5
+pgvector==0.5.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+pypdf==6.18.0
+httpx==0.28.1
+prometheus-client==0.26.0

@@ -52,21 +52,6 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         connection.assert_not_called()
 
-    def test_file_read_is_bounded_and_closed(self):
-        class GuardedFile(io.BytesIO):
-            def read(self, size=-1):
-                self.requested = size
-                if size < 0:
-                    raise AssertionError("Unbounded read")
-                return super().read(size)
-
-        stream = GuardedFile(b"12345")
-        with configured(max_upload_bytes=4), self.assertRaises(HTTPException) as raised:
-            upload_document(UploadFile(filename="test.txt", file=stream))
-        self.assertEqual(raised.exception.status_code, 413)
-        self.assertEqual(stream.requested, 5)
-        self.assertTrue(stream.closed)
-
     def test_invalid_documents_and_blank_pdf_are_422_errors(self):
         writer, output = PdfWriter(), io.BytesIO()
         writer.add_blank_page(width=72, height=72)
@@ -109,6 +94,21 @@ class HttpTests(unittest.TestCase):
 
 
 class AsyncHttpTests(unittest.IsolatedAsyncioTestCase):
+    async def test_file_read_is_bounded_and_closed(self):
+        class GuardedFile(io.BytesIO):
+            def read(self, size=-1):
+                self.requested = size
+                if size < 0:
+                    raise AssertionError("Unbounded read")
+                return super().read(size)
+
+        stream = GuardedFile(b"12345")
+        with configured(max_upload_bytes=4), self.assertRaises(HTTPException) as raised:
+            await upload_document(UploadFile(filename="test.txt", file=stream))
+        self.assertEqual(raised.exception.status_code, 413)
+        self.assertEqual(stream.requested, 5)
+        self.assertTrue(stream.closed)
+
     async def test_health_remains_responsive_during_blocking_chat(self):
         started, release = threading.Event(), threading.Event()
 
