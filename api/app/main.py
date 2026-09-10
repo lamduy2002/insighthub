@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.db import close_pool, get_conn, initialize_database
 from app.core.errors import ServiceError
 from app.core.metrics import documents_total, http_requests_total
+from app.core.queue import close_queue_pool, get_queue_pool
 from app.core.upload_limit import UploadLimitMiddleware
 from app.routers import chat, documents, health
 
@@ -27,8 +28,10 @@ for name in ("httpx", "httpcore", "pypdf", "psycopg.pool"):
 async def lifespan(app: FastAPI):
     try:
         await run_in_threadpool(initialize_database)
+        await get_queue_pool()
         yield
     finally:
+        await close_queue_pool()
         await run_in_threadpool(close_pool)
 
 

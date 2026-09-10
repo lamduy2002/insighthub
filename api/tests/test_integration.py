@@ -2,6 +2,11 @@
 
 Each test run owns a random PostgreSQL schema. Only that schema is truncated/dropped.
 No paid providers are called. A missing DB/schema fixture fails an opted-in run.
+
+POST /documents only enqueues a job (see app.core.queue); app.routers.documents.get_queue_pool
+is faked for every test so no live Redis is required. process_document is called directly to
+simulate ingestion-worker draining that job, since that is exactly what
+ingestion-worker/worker/tasks.py does (in a thread, via arq) with no logic of its own.
 """
 
 import concurrent.futures
@@ -10,7 +15,7 @@ from pathlib import Path
 import threading
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from support import configured, real_config
 import psycopg
@@ -23,6 +28,7 @@ from app.core.config import get_settings
 from app.core.errors import (
     DocumentConflict,
     IndexIdentityConflict,
+    InvalidDocument,
     ProviderError,
     SchemaMismatch,
 )
@@ -31,6 +37,16 @@ from app.main import app
 from app.services.embeddings import _local_embed
 from app.services.ingestion import process_document
 from app.services.retrieval import retrieve
+
+
+class _FakeQueuePool:
+    """Records enqueue_job calls in place of a live Redis-backed ArqRedis pool."""
+
+    def __init__(self, sink: list):
+        self._sink = sink
+
+    async def enqueue_job(self, function, *args, **kwargs):
+        self._sink.append((function, args, kwargs))
 
 
 @unittest.skipUnless(
@@ -92,7 +108,32 @@ class IntegrationTests(unittest.TestCase):
             conn.execute(
                 "TRUNCATE chunks, documents, embedding_index RESTART IDENTITY CASCADE"
             )
+        self.enqueued = []
+        queue_patcher = patch(
+            "app.routers.documents.get_queue_pool",
+            new=AsyncMock(return_value=_FakeQueuePool(self.enqueued)),
+        )
+        queue_patcher.start()
+        self.addCleanup(queue_patcher.stop)
         self.client = TestClient(app)
+
+    def upload_and_process(self, filename: str, content: bytes):
+        """POST /documents, then run the worker's job inline like ingestion-worker would.
+
+        Returns the POST response body (id, filename, status, chunk_count, mode,
+        embedding_identity_id) alongside the chunk count process_document returned,
+        since GET /documents does not include "mode".
+        """
+        response = self.client.post("/documents", files={"file": (filename, content)})
+        self.assertEqual(response.status_code, 202, response.text)
+        document = response.json()
+        self.assertEqual(document["status"], "pending")
+        self.assertEqual(document["chunk_count"], 0)
+        self.assertEqual(
+            self.enqueued[-1], ("ingest_document", (document["id"], filename, content), {})
+        )
+        chunk_count = process_document(document["id"], filename, content)
+        return document, chunk_count
 
     def create_document(self, filename="test.txt"):
         with db.get_conn() as conn:
@@ -115,14 +156,13 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(
             self.client.post("/chat", json={"question": "RAG?"}).status_code, 404
         )
-        response = self.client.post(
-            "/documents", files={"file": ("rag.txt", b"RAG uses retrieved documents.")}
+        document, chunk_count = self.upload_and_process(
+            "rag.txt", b"RAG uses retrieved documents."
         )
-        self.assertEqual(response.status_code, 201, response.text)
-        document = response.json()
+        self.assertEqual(chunk_count, 1)
         self.assertEqual(document["mode"], "fixture")
-        self.assertEqual(document["chunk_count"], 1)
-        self.assertEqual(self.client.get("/documents").json()[0]["status"], "ready")
+        listed = self.client.get("/documents").json()[0]
+        self.assertEqual(listed["status"], "ready")
         chat = self.client.post(
             "/chat", json={"question": "RAG uses retrieved documents."}
         )
@@ -259,17 +299,21 @@ class IntegrationTests(unittest.TestCase):
         state = self.state(document_id)
         self.assertEqual((state[0], state[1], state[4]), ("failed", 0, 0))
 
-    def test_empty_extracted_text_is_failed_and_422(self):
+    def test_empty_extracted_text_is_failed_by_worker(self):
         response = self.client.post(
             "/documents", files={"file": ("empty.txt", b" \n ")}
         )
-        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.status_code, 202, response.text)
+        document_id = response.json()["id"]
+        with self.assertRaises(InvalidDocument):
+            process_document(document_id, "empty.txt", b" \n ")
         document = self.client.get("/documents").json()[0]
         self.assertEqual(document["status"], "failed")
         self.assertEqual(document["chunk_count"], 0)
+        self.assertEqual(document["error_code"], "invalid_document")
 
     def test_index_identity_change_rejects_query_upload_and_readiness(self):
-        self.client.post("/documents", files={"file": ("test.txt", b"content")})
+        self.upload_and_process("test.txt", b"content")
         with (
             configured(embedding_revision="2"),
             patch("app.services.retrieval.embed") as provider,
@@ -280,7 +324,10 @@ class IntegrationTests(unittest.TestCase):
             response = self.client.post(
                 "/documents", files={"file": ("new.txt", b"new content")}
             )
-            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.status_code, 202, response.text)
+            document_id = response.json()["id"]
+            with self.assertRaises(IndexIdentityConflict):
+                process_document(document_id, "new.txt", b"new content")
             self.assertEqual(self.client.get("/readyz").status_code, 503)
         with db.get_conn() as conn:
             self.assertEqual(
@@ -288,7 +335,7 @@ class IntegrationTests(unittest.TestCase):
             )
 
     def test_same_dimension_real_provider_cannot_query_fixture_index(self):
-        self.client.post("/documents", files={"file": ("test.txt", b"content")})
+        self.upload_and_process("test.txt", b"content")
         with real_config(), patch("app.services.retrieval.embed") as provider:
             with self.assertRaises(IndexIdentityConflict):
                 retrieve("question")
@@ -328,14 +375,17 @@ class IntegrationTests(unittest.TestCase):
             upload = self.client.post(
                 "/documents", files={"file": ("real.txt", b"content")}
             )
-            self.assertEqual(upload.status_code, 201, upload.text)
+            self.assertEqual(upload.status_code, 202, upload.text)
+            self.assertEqual(
+                process_document(upload.json()["id"], "real.txt", b"content"), 1
+            )
             chat = self.client.post("/chat", json={"question": "question"})
             self.assertEqual(chat.status_code, 200, chat.text)
             self.assertEqual(chat.json()["mode"], "real")
             self.assertEqual(chat.json()["usage"]["input_tokens"], 12)
             self.assertEqual(chat.json()["usage"]["source"], "provider")
 
-    def test_provider_failure_is_502_and_metadata_truthful(self):
+    def test_provider_failure_marks_document_failed(self):
         with (
             real_config(),
             patch("app.services.embeddings.post_json", side_effect=ProviderError()),
@@ -343,7 +393,9 @@ class IntegrationTests(unittest.TestCase):
             response = self.client.post(
                 "/documents", files={"file": ("real.txt", b"content")}
             )
-        self.assertEqual(response.status_code, 502, response.text)
+            self.assertEqual(response.status_code, 202, response.text)
+            with self.assertRaises(ProviderError):
+                process_document(response.json()["id"], "real.txt", b"content")
         document = self.client.get("/documents").json()[0]
         self.assertEqual(
             (document["status"], document["chunk_count"], document["error_code"]),
