@@ -1,13 +1,18 @@
 """Day 1 HTTP-only milestone tests: async ingestion via Redis + ARQ worker.
 
-Exercises POST/GET /documents over real HTTP against a running `api` service -
-no direct database or process_document access. Standard library only
-(urllib.request for multipart upload), matching
+Exercises POST/GET/DELETE /documents and POST /chat over real HTTP against a
+running `api` service - no direct database or process_document access.
+Standard library only (urllib.request for multipart upload), matching
 scripts/requirements-verification.in, which installs only pytest + PyYAML for
 student milestone tests.
 
 Set INSIGHTHUB_API_URL to point at a non-default api (defaults to
 http://localhost:8000, the docker-compose default).
+
+Function names below (test_async_upload, test_worker_ingests,
+test_retry_idempotent, test_empty_input, test_duplicate_or_invalid,
+test_refactor_regression) are the scenario names scripts/verify.py's day1
+check requires by name.
 """
 
 from __future__ import annotations
@@ -62,6 +67,22 @@ def _upload(filename: str, content: bytes) -> tuple[int, float, dict]:
         return exc.code, elapsed, json.loads(exc.read().decode())
 
 
+def _post_json(path: str, payload: dict) -> tuple[int, dict]:
+    request = urllib.request.Request(
+        f"{API_URL}{path}",
+        data=json.dumps(payload).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            return response.status, json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode())
+
+
 def _list_documents() -> list[dict]:
     request = urllib.request.Request(f"{API_URL}/documents", method="GET")
     with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
@@ -72,14 +93,17 @@ def _find(documents: list[dict], document_id: int) -> dict | None:
     return next((doc for doc in documents if doc["id"] == document_id), None)
 
 
-def _delete(document_id: int) -> None:
+def _delete(document_id: int) -> int:
     request = urllib.request.Request(
         f"{API_URL}/documents/{document_id}", method="DELETE"
     )
     try:
-        urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS).close()
-    except urllib.error.HTTPError:
-        pass  # best-effort cleanup; already-missing is not a test failure
+        with urllib.request.urlopen(
+            request, timeout=REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code  # best-effort cleanup; already-missing is not a fixture failure
 
 
 def _poll_until_terminal(document_id: int, deadline: float = READY_DEADLINE_SECONDS) -> dict:
@@ -117,7 +141,7 @@ def uploaded_document_ids():
         _delete(document_id)
 
 
-def test_upload_returns_202_with_pending_status_under_one_second(uploaded_document_ids):
+def test_async_upload(uploaded_document_ids):
     """POST /documents must accept the upload and answer immediately (MH6: <1s),
     without blocking on ingestion - the document starts life as "pending" with
     zero chunks, since chunking/embedding now happens asynchronously in
@@ -133,7 +157,7 @@ def test_upload_returns_202_with_pending_status_under_one_second(uploaded_docume
     assert body["chunk_count"] == 0
 
 
-def test_pending_document_becomes_ready_with_chunks_within_sla(uploaded_document_ids):
+def test_worker_ingests(uploaded_document_ids):
     """After upload, ingestion-worker must dequeue the job, chunk + embed + store
     it, and flip status to "ready" with chunk_count > 0 - all within MH7's 30s
     SLA, observed purely by polling GET /documents like a real client would.
@@ -153,7 +177,7 @@ def test_pending_document_becomes_ready_with_chunks_within_sla(uploaded_document
     assert document["chunk_count"] > 0
 
 
-def test_uploading_identical_content_twice_is_processed_consistently(uploaded_document_ids):
+def test_retry_idempotent(uploaded_document_ids):
     """Uploading the same content twice must produce two independent documents,
     each correctly and consistently chunked (no unexpected chunk duplication
     within either one). The API exposes no reprocess/retry endpoint for a single
@@ -192,4 +216,108 @@ def test_uploading_identical_content_twice_is_processed_consistently(uploaded_do
     assert first_document["chunk_count"] == second_document["chunk_count"], (
         "identical content must be chunked identically and consistently - a "
         "mismatch would indicate nondeterministic or duplicated chunking"
+    )
+
+
+def test_empty_input(uploaded_document_ids):
+    """Two "empty" shapes must both be rejected without ever reaching "ready":
+    a zero-byte file is caught synchronously (422, no document even created),
+    while a whitespace-only file passes the byte-count check but fails text
+    extraction inside the worker, ending as status="failed" with an error_code -
+    verified asynchronously, since that check now runs in ingestion-worker
+    rather than inline in the request handler.
+    """
+    # Zero-byte file: rejected synchronously, before any document row exists.
+    status_code, _, body = _upload("day1-empty-zero-bytes.txt", b"")
+    assert status_code == 422, f"expected 422 for zero-byte upload, got {status_code}: {body}"
+
+    # Whitespace-only file: accepted (202 pending), then the worker fails it.
+    status_code, _, body = _upload("day1-empty-whitespace.txt", b"   \n\t  ")
+    assert status_code == 202, f"expected 202 Accepted, got {status_code}: {body}"
+    document_id = body["id"]
+    uploaded_document_ids.append(document_id)
+
+    document = _poll_until_terminal(document_id)
+    assert document["status"] == "failed", (
+        f"whitespace-only content must fail extraction, got status="
+        f"'{document['status']}' (expected 'failed')"
+    )
+    assert document.get("error_code"), "a failed document must carry an error_code"
+
+
+def test_duplicate_or_invalid(uploaded_document_ids):
+    """Invalid: an unsupported file extension is rejected synchronously (400),
+    before any document row is created. Duplicate: uploading the same filename
+    twice, with different content each time, must not collide or get mixed up -
+    each upload creates its own independent document that reaches "ready" with
+    a chunk_count of its own.
+    """
+    # Invalid: unsupported extension.
+    status_code, _, body = _upload("day1-invalid.exe", b"not a supported file type")
+    assert status_code == 400, f"expected 400 for unsupported extension, got {status_code}: {body}"
+
+    # Duplicate: same filename, different content each time.
+    same_name = "day1-duplicate-name.txt"
+    first_status, _, first_body = _upload(same_name, _unique_content("dup-a"))
+    assert first_status == 202, f"expected 202 Accepted, got {first_status}: {first_body}"
+    first_id = first_body["id"]
+    uploaded_document_ids.append(first_id)
+
+    second_status, _, second_body = _upload(same_name, _unique_content("dup-b"))
+    assert second_status == 202, f"expected 202 Accepted, got {second_status}: {second_body}"
+    second_id = second_body["id"]
+    uploaded_document_ids.append(second_id)
+
+    assert first_id != second_id, "same filename must still create two independent documents"
+
+    first_document = _poll_until_terminal(first_id)
+    second_document = _poll_until_terminal(second_id)
+    assert first_document["status"] == "ready", (
+        f"document {first_id} ended as '{first_document['status']}' "
+        f"(error_code={first_document.get('error_code')})"
+    )
+    assert second_document["status"] == "ready", (
+        f"document {second_id} ended as '{second_document['status']}' "
+        f"(error_code={second_document.get('error_code')})"
+    )
+    assert first_document["chunk_count"] > 0
+    assert second_document["chunk_count"] > 0
+
+
+def test_refactor_regression(uploaded_document_ids):
+    """The async refactor must not break the pre-existing document lifecycle and
+    /chat contract: a document that becomes ready must be retrievable via RAG
+    chat with its filename correctly attributed as a source, and deleting it
+    must remove it from GET /documents - confirming upload, list, chat and
+    delete all still work end-to-end after the sync -> async rewrite.
+    """
+    marker = uuid.uuid4().hex
+    filename = "day1-refactor-regression.txt"
+    content = f"InsightHub regression marker {marker} describes the async refactor.".encode()
+
+    status_code, _, body = _upload(filename, content)
+    assert status_code == 202, f"expected 202 Accepted, got {status_code}: {body}"
+    document_id = body["id"]
+    uploaded_document_ids.append(document_id)
+
+    document = _poll_until_terminal(document_id)
+    assert document["status"] == "ready", (
+        f"document {document_id} ended as '{document['status']}' "
+        f"(error_code={document.get('error_code')})"
+    )
+
+    chat_status, chat_body = _post_json("/chat", {"question": f"regression marker {marker}"})
+    assert chat_status == 200, f"expected 200 from /chat, got {chat_status}: {chat_body}"
+    assert chat_body.get("answer"), "chat response must include a non-empty answer"
+    assert filename in chat_body.get("sources", []), (
+        f"expected '{filename}' among chat sources, got {chat_body.get('sources')}"
+    )
+
+    delete_status = _delete(document_id)
+    assert delete_status == 204, f"expected 204 from DELETE, got {delete_status}"
+    uploaded_document_ids.remove(document_id)  # already deleted; skip fixture cleanup
+
+    remaining = _list_documents()
+    assert _find(remaining, document_id) is None, (
+        f"document {document_id} must no longer appear in GET /documents after delete"
     )
