@@ -44,3 +44,6 @@ tmp/
 evidence/
 reports/
 *.tsbuildinfo
+
+# --- MCP kubeconfig (chứa token, không commit) ---
+infra/k8s/*.kubeconfig
