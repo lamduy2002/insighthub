@@ -191,15 +191,28 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
 - **Dự toán chi phí**: dùng Infracost theo region/account thực tế, tính đủ
   thời gian provision + idle + test + destroy; không giả định free tier,
   không cam kết dưới $50/tháng (đúng NFR §7.3 mục 7).
-- **Ước tính chi phí theo giờ** (region ap-southeast-1, chưa tính RDS/Redis —
-  sẽ chốt cụ thể khi có `variables.tf` và chạy Infracost):
-  - VPC, Internet Gateway, Route Table: **miễn phí**.
-  - EKS control plane: **~$0.10/giờ**.
-  - 1 node `t3.medium` (on-demand): **~$0.0416/giờ**.
-  - ALB (do AWS Load Balancer Controller tự tạo khi Ingress được apply):
-    **~$0.0225/giờ** + phụ phí LCU theo traffic.
-  - **Tổng ước tính tối thiểu: ~$0.164/giờ** (chưa gồm RDS/Redis, EBS, data
-    transfer — bổ sung khi Infracost breakdown chạy trên `.tf` thật).
+- **Ước tính chi phí chính thức** (region ap-southeast-1, chạy
+  `infracost breakdown --path infra/` trên `.tf` thật ngày 2026-09-22, giả
+  định chạy 730h/tháng liên tục):
+
+  | Resource | Hạng mục | Chi phí/tháng |
+  |---|---|---|
+  | `aws_eks_cluster.lab` | EKS control plane (730h) | $73.00 |
+  | `aws_eks_node_group.lab` | Instance `t3.medium` on-demand (730h) | $38.54 |
+  | `aws_eks_node_group.lab` | EBS gp2 20GB | $2.40 |
+  | `aws_db_instance.postgres` | RDS Single-AZ `db.t3.micro` (730h) | $20.44 |
+  | `aws_db_instance.postgres` | Storage gp2 20GB | $2.76 |
+  | `aws_elasticache_replication_group.redis` | `cache.t3.micro` on-demand (730h) | $18.25 |
+  | `aws_kms_key.eks` | Customer master key | $1.00 |
+  | `aws_secretsmanager_secret.db` | Secret | $0.40 |
+  | `aws_secretsmanager_secret.redis` | Secret | $0.40 |
+  | **TỔNG** | | **$157.19/tháng** (~$0.2154/giờ) |
+
+  32 resource được Infracost phát hiện — 7 có chi phí, 25 miễn phí (VPC,
+  subnet, IAM role, route table, OIDC provider...). Con số này **chưa gồm
+  ALB** (xem lưu ý riêng bên dưới) và là chi phí nếu chạy **24/7 cả tháng**
+  — theo nguyên tắc "theo lượt, có thời điểm kết thúc" ở trên, chi phí thực
+  tế mỗi lượt lab sẽ thấp hơn nhiều vì chỉ tính theo số giờ thực chạy.
   - **Lưu ý về vòng đời ALB**: `terraform destroy` chỉ xóa VPC/EKS/RDS/Redis
     và các resource `.tf` khác — **không** xóa được ALB, vì ALB do Helm/
     Kubernetes Ingress tạo ra ngoài phạm vi Terraform state. Phải xóa
@@ -216,3 +229,39 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
 - `Running-Project-Specification-Student.md` §7 (Day 3 - AI-Powered IaC & Pipeline).
 - `docs/Guide_Local_AWS_Cost_DO2603.md` (local-first, cost, teardown).
 - `infra/README.md` (phạm vi thư mục infra/ hiện có).
+
+## 10. Accepted Risks — Checkov Findings
+
+Chạy `checkov -d infra/` (2026-09-22) sau khi đã sửa 6 finding quan trọng
+(CKV_AWS_382, CKV_AWS_38, CKV_AWS_58, CKV2_AWS_12, CKV_AWS_30, CKV_AWS_31 —
+xem chi tiết cách sửa trong `main.tf`) còn lại **17 check ID** (19 dòng, vì
+2 check áp dụng cho cả 2 Secrets Manager secret `db` và `redis`) chưa pass.
+Đây là các finding **chấp nhận rủi ro có chủ đích cho lab**, không phải bỏ
+sót — lý do cụ thể theo từng nhóm:
+
+| Check ID | Resource | Lý do chấp nhận |
+|---|---|---|
+| CKV_AWS_130 | `aws_subnet.public` | Kiến trúc lab cố ý dùng subnet public, không NAT Gateway, để tiết kiệm chi phí (đã chốt tại Mục 0(b)/Mục 2). |
+| CKV_AWS_39 | `aws_eks_cluster.lab` | Đã giảm thiểu tối đa bằng `public_access_cidrs` giới hạn đúng 1 IP của operator (CKV_AWS_38 đã PASS), nhưng không thể tắt hoàn toàn `endpoint_public_access` vì kiến trúc hiện tại không có private subnet/VPN/bastion để truy cập control plane — cần hạ tầng bổ sung (VPN/bastion), ngoài phạm vi Day 3. |
+| CKV_AWS_37 | `aws_eks_cluster.lab` | Bật full control-plane logging phát sinh chi phí CloudWatch Logs liên tục; production-grade observability, không cần cho lab ngắn hạn theo lượt. |
+| CKV_AWS_118 | `aws_db_instance.postgres` | RDS Enhanced Monitoring tăng chi phí, cần thêm IAM role riêng; không cần cho việc kiểm chứng ingestion pipeline trong lượt lab. |
+| CKV_AWS_226 | `aws_db_instance.postgres` | Cố ý pin `engine_version = "16.15"` để đảm bảo reproducibility trong lượt lab; tự động minor-upgrade có thể gây gián đoạn ngoài dự kiến giữa buổi. |
+| CKV_AWS_161 | `aws_db_instance.postgres` | IAM authentication cho RDS cần sửa code kết nối DB trong `api`/`ingestion-worker` (dùng IAM token thay password) — ngoài phạm vi hạ tầng Day 3, có thể làm ở refactor sau. |
+| CKV_AWS_353 | `aws_db_instance.postgres` | Performance Insights tăng chi phí; production-grade observability, không cần cho lab. |
+| CKV_AWS_293 | `aws_db_instance.postgres` | Deletion protection mâu thuẫn trực tiếp với yêu cầu `terraform destroy` sạch sau mỗi lượt lab (SPEC Mục 8) — bật sẽ chặn teardown tự động. |
+| CKV_AWS_129 | `aws_db_instance.postgres` | Export log RDS tăng chi phí CloudWatch Logs và có rủi ro vô tình log dữ liệu nhạy cảm nếu cấu hình sai (AGENTS.md §2 cấm log dữ liệu nhạy cảm). |
+| CKV_AWS_157 | `aws_db_instance.postgres` | Multi-AZ tăng gấp đôi chi phí RDS — vượt ngân sách lượt lab (SPEC Mục 8), dữ liệu lab không critical/tái tạo được. |
+| CKV_AWS_191 | `aws_elasticache_replication_group.redis` | Đã có `at_rest_encryption_enabled = true` (AWS managed key) đủ cho lab; CMK riêng thêm chi phí/độ phức tạp quản lý key không cần thiết. |
+| CKV_AWS_149 | `aws_secretsmanager_secret.db`, `aws_secretsmanager_secret.redis` | Default AWS managed key (`aws/secretsmanager`) đã mã hóa at-rest đủ cho secret chỉ tồn tại trong thời gian lượt lab; CMK riêng không cần thiết. |
+| CKV2_AWS_11 | `aws_vpc.lab` | VPC Flow Logs tăng chi phí lưu trữ (S3/CloudWatch Logs) liên tục; production-grade auditing, ngoài phạm vi lab theo lượt (tương tự lý do bỏ drift-detection nightly ở Mục 7). |
+| CKV2_AWS_30 | `aws_db_instance.postgres` | Query Logging tăng chi phí và có cùng rủi ro log dữ liệu nhạy cảm như CKV_AWS_129. |
+| CKV2_AWS_60 | `aws_db_instance.postgres` | Không áp dụng thực tế: `skip_final_snapshot = true` nên lab không tạo snapshot nào để copy tag. |
+| CKV2_AWS_57 | `aws_secretsmanager_secret.db`, `aws_secretsmanager_secret.redis` | Automatic rotation cần Lambda rotation riêng + wiring mạng/IAM bổ sung — ngoài phạm vi Day 3; secret chỉ sống trong thời gian lượt lab rồi bị xóa (`recovery_window_in_days = 0`). |
+| CKV2_AWS_50 | `aws_elasticache_replication_group.redis` | Multi-AZ automatic failover cần ≥2 cache cluster (replica), tăng gấp đôi chi phí Redis; lab cố ý dùng `num_cache_clusters = 1` (SPEC Mục 2: "không cần replica"). |
+
+**Lưu ý về CKV_AWS_39**: đây là finding duy nhất trong 6 finding được giao ban
+đầu **không đóng hoàn toàn** được — lý do đã ghi ở bảng trên. Nếu cần đóng
+dứt điểm, hướng khả thi là thêm VPN (Client VPN endpoint hoặc Site-to-Site)
+hoặc bastion host trong public subnet, rồi tắt hẳn `endpoint_public_access`
+— đây là thay đổi kiến trúc lớn hơn phạm vi policy-gate hiện tại, cần quyết
+định riêng nếu muốn triển khai.
