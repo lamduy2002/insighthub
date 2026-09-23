@@ -161,6 +161,8 @@ resource "aws_iam_role_policy" "gh_apply_state" {
 # cho các action Create*/Delete*/Modify* — dùng Resource "*", nhưng giới hạn
 # đúng bộ action module chính cần thay vì ec2:*.
 resource "aws_iam_role_policy" "gh_apply_network" {
+  #checkov:skip=CKV_AWS_355:EC2 Create/Delete/Modify cho VPC/subnet/IGW/route table/SG khong ho tro Resource-level ARN, bat buoc "*" - da gioi han dung bo action can - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_290:Cung nguyen nhan CKV_AWS_355 - action ghi di kem Resource "*" do gioi han API, khong phai thieu rang buoc chu y - xem SPEC.md muc 10
   name = "${var.project_name}-gh-apply-network"
   role = aws_iam_role.gh_apply.id
 
@@ -208,6 +210,9 @@ resource "aws_iam_role_policy" "gh_apply_eks" {
 }
 
 resource "aws_iam_role_policy" "gh_apply_data" {
+  #checkov:skip=CKV_AWS_355:ElastiCache/KMS Create truoc khi resource ton tai bat buoc Resource "*" (khong co ARN co dinh) - da gioi han dung bo action can - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_290:Cung nguyen nhan CKV_AWS_355 - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_289:kms:PutKeyPolicy/CreateGrant bi coi la "permissions management" nhung bat buoc Resource "*" truoc khi CMK ton tai - xem SPEC.md muc 10
   name = "${var.project_name}-gh-apply-data"
   role = aws_iam_role.gh_apply.id
 

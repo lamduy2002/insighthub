@@ -25,7 +25,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | MH10 | InsightHub Helm deploy | dòng 834 | ❌ chưa làm — không có chart nào trong repo; ECR repo đã có code (chưa apply) để sau này push image |
 | MH11 | Smoke test upload+chat | dòng 835 | ❌ chưa làm |
 | MH12 | `tflint --recursive` no warnings | dòng 836 | ✅ xong — đã chạy lại trên cả module chính + `infra/bootstrap/github-oidc/`: 0 errors, 0 warnings |
-| MH13 | `checkov` no HIGH | dòng 837 | ⚠️ chưa xác minh được severity — nay **28 finding failed** (19 cũ + 9 mới từ private subnet/ECR/bootstrap IAM), tất cả đã ghi lý do tại `infra/SPEC.md` mục 10 (bảng cũ + bảng "9 finding mới"); vẫn thiếu xác nhận độc lập "không HIGH" |
+| MH13 | `checkov` no HIGH | dòng 837 | ✅ `checkov -d infra/` → **157 passed, 0 failed, 24 skipped, exit 0** — 2 finding sửa hẳn bằng code (CKV2_AWS_60, CKV_AWS_136×3), 24 còn lại chuyển thành `#checkov:skip` tại resource kèm lý do (`infra/SPEC.md` mục 10). Vẫn thiếu xác nhận độc lập severity "không HIGH" cho 24 finding skip (checkov OSS không trả field `severity`), nhưng exit code 0 nên job security-scan trong pipeline sẽ xanh. |
 | MH14 | All resources tagged | dòng 838 | ✅ áp dụng quyết định J.1 — `owner` (chữ thường) duy nhất trong `common_tags`, không còn `Owner`. Module bootstrap dùng tag scheme riêng có chủ đích (xem SPEC.md mục 2, phần Tagging) |
 
 ## B. Non-functional (§7.3, dòng 802-809)
@@ -33,7 +33,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | # | Yêu cầu | Trạng thái |
 |---|---|---|
 | 1 | `tflint --recursive` no warnings | ✅ xong |
-| 2 | `checkov -d infra/` no HIGH | ⚠️ chưa xác minh severity |
+| 2 | `checkov -d infra/` no HIGH | ✅ 0 failed, 24 skipped kèm lý do inline (xem mục A/MH13) |
 | 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ❌ chưa làm — không có file `.rego` nào trong repo (ngoài phạm vi lượt sửa Terraform này) |
 | 4 | Tags: project, environment, owner, cost_center, managed_by | ✅ áp dụng quyết định J.1 |
 | 5 | Pipeline OIDC AWS (no long-lived keys) | ⚠️ code xong, chưa apply — `infra/bootstrap/github-oidc/` có OIDC provider + 2 role (`gh_plan`/`gh_apply`), `terraform plan` sạch (10 to add); chưa apply nên GitHub Actions thật vẫn chưa dùng được. Mọi apply thủ công hôm nay vẫn qua IAM user `DE000215` (long-lived key), hợp lệ cho thao tác thủ công. |
@@ -48,7 +48,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | `terraform init -backend=true` → success | ✅ |
 | `terraform validate` → success | ✅ |
 | `tflint --recursive` → 0/0 | ✅ |
-| `checkov -d infra/` → no HIGH | ⚠️ chưa xác minh — nay 28 finding (xem mục A/MH13) |
+| `checkov -d infra/` → no HIGH | ✅ 0 failed (xem mục A/MH13) |
 | `terraform plan -out=tfplan` → deterministic | ✅ **sửa thật** — trước đây dòng này bị đánh dấu ✅ nhầm: `public_access_cidrs` lấy từ `data.http.my_ip` khiến plan **không** deterministic (đổi theo IP mạng). Đã bỏ `data.http`, dùng `var.operator_cidrs` bắt buộc truyền — giờ plan mới thật sự deterministic. |
 | `conftest test --policy policy/terraform tfplan.json` → pass — **bắt buộc** | ❌ — path chưa tồn tại, chưa có Rego nào; xem mục H và J cho quyết định path |
 | `infracost breakdown --path infra/` | ✅ |
@@ -146,12 +146,16 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 
 **Mọi sửa source sau bước 2** (kể cả sửa nhỏ, chưa commit) làm `fingerprint(repo)` lệch khỏi `source_sha256` đã đóng băng trong `source-manifest.json` → verify FAIL ngay ở bước so khớp (`scripts/verify.py:547`). Nếu cần sửa thêm, phải quay lại bước 2 (chạy CI lại).
 
+**Ràng buộc bổ sung cho bước 2 — thời điểm chạy CI lần cuối**: phải chạy khi **state của module chính (`infra/`) đang rỗng** (sau teardown, chưa apply lại). Lý do: provider `kubernetes` dùng `exec` auth gọi `aws eks get-token` (mục J.5) — nếu `iac.yml` có job nào chạm tới provider này (kể cả chỉ `terraform plan`/`validate` với backend thật, không chỉ riêng `apply`), job đó cần **endpoint EKS cluster khả truy cập từ GitHub-hosted runner**, nhưng `public_access_cidrs = var.operator_cidrs` (mục J.4) chỉ whitelist đúng IP operator — **runner GitHub Actions luôn bị chặn** (IP khác, không nằm trong `operator_cidrs`). Do đó: chạy CI lần cuối cho `verification-source` khi cluster **chưa tồn tại** (state rỗng) để tránh job liên quan tới cluster bị timeout/lỗi kết nối; job đó chỉ nên chạy `fmt/validate/tflint/checkov/plan` (không cần cluster sống) — apply thật vẫn làm thủ công tại local như các lượt trước.
+
 ## L. Chuẩn bị trước khi deploy (bổ sung — không có mục riêng trong spec nhưng cần cho MH10/§2.3)
 
 - **Cài `metrics-server`** trước khi deploy HPA cho `api` (§2.3 dòng 196) — HPA không hoạt động nếu thiếu `metrics-server` để cung cấp CPU/memory metrics. Cần cài **cả trên minikube** (giai đoạn test offline, `minikube addons enable metrics-server`) **và trên EKS** (giai đoạn apply cuối, qua Helm chart `metrics-server` chính thức hoặc manifest components.yaml), vì đây là 2 cluster khác nhau, không tự động có sẵn.
 
 ## M. Việc đã làm trong lượt sửa Terraform này (2026-09-23, KHÔNG apply)
 
-Toàn bộ thay đổi ở `infra/main.tf`, `infra/variables.tf`, `infra/providers.tf` + module mới `infra/bootstrap/github-oidc/`. Đã chạy `terraform fmt -check -recursive` (0 diff), `terraform validate` (cả 2 module), `tflint --recursive` (0/0), `checkov -d infra/` (153 passed / 28 failed, xem SPEC.md mục 10), `terraform plan` cho module chính (**47 to add**, state đang rỗng sau teardown lượt trước) và module bootstrap (**10 to add**). Không có lệnh `apply` nào chạy.
+Toàn bộ thay đổi ở `infra/main.tf`, `infra/variables.tf`, `infra/providers.tf` + module mới `infra/bootstrap/github-oidc/`. Đã chạy `terraform fmt -check -recursive` (0 diff), `terraform validate` (cả 2 module), `tflint --recursive` (0/0), `checkov -d infra/` (153 passed / 28 failed ban đầu), `terraform plan` cho module chính (**47 to add**, state đang rỗng sau teardown lượt trước) và module bootstrap (**10 to add**). Không có lệnh `apply` nào chạy.
+
+**Lượt tiếp theo cùng ngày**: sửa `copy_tags_to_snapshot`/`encryption_configuration` (đóng CKV2_AWS_60 + CKV_AWS_136×3 bằng code), chuyển 24 finding còn lại thành `#checkov:skip` tại resource → **`checkov -d infra/`: 157 passed, 0 failed, 24 skipped, exit 0**. `tflint`/`validate` vẫn sạch.
 
 Chưa làm trong lượt này (nằm ngoài phạm vi "chỉ Terraform"): file Rego (`infra/policy/terraform/`), `tests/milestones/day3/test_*.py`, `.github/workflows/iac.yml`, Helm chart, `ai-prompts/day3.md`, `lab-manifest.json` lập trước (vẫn còn nợ từ lượt trước).

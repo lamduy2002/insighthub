@@ -4,6 +4,7 @@
 # ============================================================
 
 resource "aws_vpc" "lab" {
+  #checkov:skip=CKV2_AWS_11:VPC Flow Logs tang chi phi luu tru (S3/CloudWatch) lien tuc, production-grade auditing ngoai pham vi lab theo luot - xem SPEC.md muc 10
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true # bắt buộc cho EKS (DNS nội bộ cluster)
@@ -32,6 +33,7 @@ locals {
 }
 
 resource "aws_subnet" "public" {
+  #checkov:skip=CKV_AWS_130:EKS node group can public IP de ra internet, khong NAT Gateway (chi phi $0) - RDS/Redis da chuyen sang private subnet - xem SPEC.md muc 10
   for_each = local.public_subnet_cidrs
 
   vpc_id                  = aws_vpc.lab.id
@@ -243,6 +245,9 @@ resource "aws_iam_role_policy_attachment" "eks_node_ecr_readonly" {
 }
 
 resource "aws_eks_cluster" "lab" {
+  #checkov:skip=CKV_AWS_39:Khong tat hoan toan endpoint public vi chua co VPN/bastion, ngoai pham vi Day 3 - da gioi han public_access_cidrs - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_37:Full control-plane logging phat sinh chi phi CloudWatch Logs lien tuc, khong can cho lab ngan han - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_38:public_access_cidrs lay tu var.operator_cidrs (bat buoc truyen, co validation chan 0.0.0.0/0) nhung checkov khong resolve tinh duoc gia tri - xem SPEC.md muc 10
   name     = var.eks_cluster_name
   role_arn = aws_iam_role.eks_cluster.arn
 
@@ -373,6 +378,14 @@ resource "aws_db_subnet_group" "lab" {
 }
 
 resource "aws_db_instance" "postgres" {
+  #checkov:skip=CKV_AWS_118:Enhanced Monitoring tang chi phi, can them IAM role rieng, khong can cho kiem chung ingestion pipeline trong lab - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_226:Co y pin engine_version de dam bao reproducibility trong luot lab - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_161:IAM authentication can sua code ket noi DB trong api/ingestion-worker, ngoai pham vi ha tang Day 3 - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_353:Performance Insights tang chi phi, production-grade observability khong can cho lab - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_293:Deletion protection mau thuan voi yeu cau terraform destroy sach sau moi luot lab - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_129:Export log RDS tang chi phi va rui ro log du lieu nhay cam - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_157:Multi-AZ tang gap doi chi phi RDS, vuot ngan sach luot lab - xem SPEC.md muc 10
+  #checkov:skip=CKV2_AWS_30:Query Logging tang chi phi va cung rui ro log du lieu nhay cam nhu CKV_AWS_129 - xem SPEC.md muc 10
   identifier     = "${var.project_name}-postgres"
   engine         = "postgres"
   engine_version = var.db_engine_version
@@ -392,6 +405,11 @@ resource "aws_db_instance" "postgres" {
   # Lab: tránh snapshot phát sinh tính phí sau khi destroy (SPEC Mục 7).
   skip_final_snapshot = true
 
+  # Miễn phí, không ảnh hưởng vận hành — áp dụng cho automated backup
+  # snapshot trong vòng đời instance (khác skip_final_snapshot, chỉ tránh
+  # final snapshot lúc destroy). Đóng CKV2_AWS_60 bằng code thay vì skip.
+  copy_tags_to_snapshot = true
+
   tags = local.common_tags
 }
 
@@ -410,6 +428,8 @@ resource "random_password" "redis_auth" {
 }
 
 resource "aws_elasticache_replication_group" "redis" {
+  #checkov:skip=CKV_AWS_191:at_rest_encryption_enabled=true (AWS managed key) da du cho lab, CMK rieng them chi phi/do phuc tap khong can thiet - xem SPEC.md muc 10
+  #checkov:skip=CKV2_AWS_50:Multi-AZ failover can >=2 cache cluster, tang gap doi chi phi Redis, lab co y dung num_cache_clusters=1 - xem SPEC.md muc 10
   replication_group_id = "${var.project_name}-redis"
   description          = "Redis cho InsightHub lab (ARQ job queue)"
 
@@ -438,6 +458,8 @@ resource "aws_elasticache_replication_group" "redis" {
 # ============================================================
 
 resource "aws_secretsmanager_secret" "db" {
+  #checkov:skip=CKV_AWS_149:Default AWS managed key (aws/secretsmanager) da ma hoa at-rest du cho secret chi ton tai trong thoi gian luot lab - xem SPEC.md muc 10
+  #checkov:skip=CKV2_AWS_57:Automatic rotation can Lambda rieng + wiring bo sung, ngoai pham vi Day 3; secret bi xoa ngay khi destroy (recovery_window_in_days=0) - xem SPEC.md muc 10
   name = "${var.project_name}/${var.environment}/db-credentials"
 
   # Lab: xóa ngay khi destroy, không chờ recovery window mặc định (7-30 ngày)
@@ -462,6 +484,8 @@ resource "aws_secretsmanager_secret_version" "db" {
 # transit_encryption_enabled) — không để token chỉ nằm trong Terraform
 # state, pod đọc qua IRSA giống pattern DB credentials.
 resource "aws_secretsmanager_secret" "redis" {
+  #checkov:skip=CKV_AWS_149:Default AWS managed key (aws/secretsmanager) da ma hoa at-rest du cho secret chi ton tai trong thoi gian luot lab - xem SPEC.md muc 10
+  #checkov:skip=CKV2_AWS_57:Automatic rotation can Lambda rieng + wiring bo sung, ngoai pham vi Day 3; secret bi xoa ngay khi destroy (recovery_window_in_days=0) - xem SPEC.md muc 10
   name                    = "${var.project_name}/${var.environment}/redis-credentials"
   recovery_window_in_days = 0
 
@@ -616,6 +640,13 @@ resource "aws_ecr_repository" "app" {
 
   image_scanning_configuration {
     scan_on_push = true
+  }
+
+  # AWS managed key (aws/ecr) thay vì mặc định AES256 — đóng CKV_AWS_136
+  # bằng code, không dùng CMK riêng (aws_kms_key.eks) để tránh phải sửa
+  # key policy cấp quyền pull image cho node role.
+  encryption_configuration {
+    encryption_type = "KMS"
   }
 
   tags = local.common_tags

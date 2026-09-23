@@ -309,16 +309,24 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
 
 Chạy `checkov -d infra/` (2026-09-22, sau khi đã sửa 6 finding quan trọng ban
 đầu: CKV_AWS_382, CKV_AWS_38, CKV_AWS_58, CKV2_AWS_12, CKV_AWS_30, CKV_AWS_31)
-còn lại 19 dòng chưa pass. **Chạy lại sau khi thêm private subnet/K8s
-namespace-SA/ECR/module bootstrap OIDC (2026-09-23) — tổng 28 check FAILED**
-(153 passed): 19 finding cũ giữ nguyên (không cái nào tự hết nhờ thay đổi lần
-này) + **9 finding mới phát sinh** từ resource mới thêm. Đây là các finding
-**chấp nhận rủi ro có chủ đích cho lab**, không phải bỏ sót — lý do cụ thể
-theo từng nhóm:
+còn lại 19 dòng chưa pass. Sau khi thêm private subnet/K8s namespace-SA/ECR/
+module bootstrap OIDC (2026-09-23) phát sinh thêm 9 finding mới (28 tổng).
+Trong 9 finding mới, **2 finding sửa được bằng code** thay vì chấp nhận rủi
+ro (không tốn chi phí, không đổi hành vi): `copy_tags_to_snapshot = true`
+trên `aws_db_instance.postgres` (đóng CKV2_AWS_60) và
+`encryption_configuration { encryption_type = "KMS" }` dùng AWS managed key
+`aws/ecr` trên cả 3 `aws_ecr_repository.app[*]` (đóng CKV_AWS_136 ×3, không
+cần CMK riêng nên không phải sửa key policy). Còn lại **24 finding** là
+**chấp nhận rủi ro có chủ đích cho lab**, không phải bỏ sót — đã chuyển
+thành `#checkov:skip=<ID>:<lý do>` gắn trực tiếp tại từng resource trong
+`main.tf`/`infra/bootstrap/github-oidc/main.tf` (không dùng `--soft-fail`
+hay `--skip-check` toàn cục). Kết quả `checkov -d infra/`: **157 passed, 0
+failed, 24 skipped, exit code 0** — lý do cụ thể theo từng nhóm (nguyên văn
+cũng là nội dung trong từng comment `#checkov:skip`):
 
 | Check ID | Resource | Lý do chấp nhận |
 |---|---|---|
-| CKV_AWS_130 | `aws_subnet.public` | Kiến trúc lab cố ý dùng subnet public, không NAT Gateway, để tiết kiệm chi phí (đã chốt tại Mục 0(b)/Mục 2). |
+| CKV_AWS_130 | `aws_subnet.public` | Chỉ còn EKS node group đặt ở subnet public (cần public IP tự ra internet, không NAT Gateway để tiết kiệm chi phí). RDS/Redis đã chuyển sang 2 private subnet riêng (MH5, Mục 2) — không còn public. |
 | CKV_AWS_39 | `aws_eks_cluster.lab` | Đã giảm thiểu bằng `public_access_cidrs = var.operator_cidrs` (bắt buộc CIDR hẹp, có `validation` chặn `0.0.0.0/0`), nhưng không thể tắt hoàn toàn `endpoint_public_access` vì kiến trúc hiện tại không có VPN/bastion để truy cập control plane — cần hạ tầng bổ sung, ngoài phạm vi Day 3. |
 | CKV_AWS_37 | `aws_eks_cluster.lab` | Bật full control-plane logging phát sinh chi phí CloudWatch Logs liên tục; production-grade observability, không cần cho lab ngắn hạn theo lượt. |
 | CKV_AWS_118 | `aws_db_instance.postgres` | RDS Enhanced Monitoring tăng chi phí, cần thêm IAM role riêng; không cần cho việc kiểm chứng ingestion pipeline trong lượt lab. |
@@ -332,16 +340,21 @@ theo từng nhóm:
 | CKV_AWS_149 | `aws_secretsmanager_secret.db`, `aws_secretsmanager_secret.redis` | Default AWS managed key (`aws/secretsmanager`) đã mã hóa at-rest đủ cho secret chỉ tồn tại trong thời gian lượt lab; CMK riêng không cần thiết. |
 | CKV2_AWS_11 | `aws_vpc.lab` | VPC Flow Logs tăng chi phí lưu trữ (S3/CloudWatch Logs) liên tục; production-grade auditing, ngoài phạm vi lab theo lượt (tương tự lý do bỏ drift-detection nightly ở Mục 7). |
 | CKV2_AWS_30 | `aws_db_instance.postgres` | Query Logging tăng chi phí và có cùng rủi ro log dữ liệu nhạy cảm như CKV_AWS_129. |
-| CKV2_AWS_60 | `aws_db_instance.postgres` | Không áp dụng thực tế: `skip_final_snapshot = true` nên lab không tạo snapshot nào để copy tag. |
 | CKV2_AWS_57 | `aws_secretsmanager_secret.db`, `aws_secretsmanager_secret.redis` | Automatic rotation cần Lambda rotation riêng + wiring mạng/IAM bổ sung — ngoài phạm vi Day 3; secret chỉ sống trong thời gian lượt lab rồi bị xóa (`recovery_window_in_days = 0`). |
 | CKV2_AWS_50 | `aws_elasticache_replication_group.redis` | Multi-AZ automatic failover cần ≥2 cache cluster (replica), tăng gấp đôi chi phí Redis; lab cố ý dùng `num_cache_clusters = 1` (SPEC Mục 2: "không cần replica"). |
 
-**9 finding mới (2026-09-23), phát sinh từ private subnet/K8s/ECR/bootstrap OIDC:**
+**✅ Đã sửa bằng code (2026-09-23), không còn là accepted risk:**
+
+| Check ID | Resource | Cách sửa |
+|---|---|---|
+| CKV2_AWS_60 | `aws_db_instance.postgres` | Thêm `copy_tags_to_snapshot = true` — miễn phí, không ảnh hưởng vận hành (áp dụng cho automated backup snapshot, khác `skip_final_snapshot`). |
+| CKV_AWS_136 ×3 | `aws_ecr_repository.app["api"\|"web"\|"ingestion-worker"]` | Thêm `encryption_configuration { encryption_type = "KMS" }`, KHÔNG chỉ định `kms_key` → dùng AWS managed key `aws/ecr` (miễn phí, không cần sửa key policy, không ảnh hưởng quyền pull image của node role — chủ động tránh dùng `aws_kms_key.eks` vì sẽ cần cấp thêm quyền `kms:Decrypt` cho node role). |
+
+**6 finding mới còn lại (2026-09-23), phát sinh từ EKS endpoint variable/bootstrap OIDC IAM policy — đã chuyển thành `#checkov:skip` tại resource:**
 
 | Check ID | Resource | Lý do chấp nhận |
 |---|---|---|
 | CKV_AWS_38 | `aws_eks_cluster.lab` | **Regression so với bản trước** — trước đây `public_access_cidrs` lấy từ `data.http.my_ip` (giá trị cụ thể, checkov resolve được nên PASS); giờ đổi sang `var.operator_cidrs` không default (Acceptance §7.5 đòi plan deterministic) nên checkov không resolve tĩnh được giá trị thật, coi như chưa chắc chắn không phải `0.0.0.0/0` dù đã có `validation` block chặn ở Terraform layer. Checkov không đọc được `validation` block của biến. |
-| CKV_AWS_136 ×3 | `aws_ecr_repository.app["api"\|"web"\|"ingestion-worker"]` | ECR mặc định mã hóa `AES256` (SSE-S3 managed) đã đủ cho image lab tồn tại ngắn hạn; CMK riêng thêm chi phí/độ phức tạp quản lý key không cần thiết — cùng lý do đã chấp nhận cho CKV_AWS_191/149 ở trên. |
 | CKV_AWS_355 ×2 | `aws_iam_role_policy.gh_apply_network`, `gh_apply_data` (bootstrap) | EC2 (VPC/subnet/IGW/route table/SG) và phần lớn action ElastiCache/KMS không hỗ trợ Resource-level ARN cho `Create*/Delete*/Modify*` trước khi resource tồn tại — bắt buộc `Resource = "*"`, đã giới hạn đúng bộ action cần (không dùng `ec2:*`/`kms:*`). |
 | CKV_AWS_290 ×2 | như trên | Cùng nguyên nhân CKV_AWS_355 — action ghi (Create/Delete/Modify) đi kèm `Resource = "*"` do giới hạn API, không phải thiếu ràng buộc chủ ý. |
 | CKV_AWS_289 | `aws_iam_role_policy.gh_apply_data` (bootstrap) | `kms:PutKeyPolicy`/`kms:CreateGrant` bị coi là "permissions management" — bắt buộc do KMS API yêu cầu `Resource = "*"` cho các action này trước khi key tồn tại, đã giới hạn còn lại ở mức statement riêng theo service. |
