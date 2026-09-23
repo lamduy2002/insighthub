@@ -17,7 +17,7 @@ variable "environment" {
 }
 
 variable "owner" {
-  description = "Chủ sở hữu tài nguyên lab, dùng cho tag owner/Owner để truy vết trách nhiệm cleanup."
+  description = "Chủ sở hữu tài nguyên lab, dùng cho tag owner để truy vết trách nhiệm cleanup. AWS coi tag key case-insensitive nên 'owner' (chữ thường) đáp ứng đồng thời yêu cầu spec (owner) và Guide (Owner)."
   type        = string
   default     = "lamduy2002"
 }
@@ -31,13 +31,30 @@ variable "cost_center" {
 variable "expires_at" {
   description = <<-EOT
     Thời điểm dự kiến kết thúc lượt lab (ISO 8601, vd "2026-09-23T18:00:00+07:00").
-    Không có default cố định vì mỗi lượt lab có thời hạn khác nhau — PHẢI truyền
-    qua .tfvars hoặc -var mỗi lần apply, khớp started_at/expires_at trong
-    lab-manifest.json (SPEC.md Mục 8). Dùng để gắn tag ExpiresAt, hỗ trợ soát
-    tài nguyên còn sót sau lượt lab.
+    KHÔNG có default — bắt buộc truyền qua .tfvars, -var hoặc TF_VAR_expires_at
+    mỗi lần apply, khớp started_at/expires_at trong lab-manifest.json (Guide
+    Local/AWS Cost, mục "Trước khi tạo AWS"). Terraform sẽ dừng plan/apply nếu
+    thiếu, tránh lặp lại lỗi tag ExpiresAt rỗng đã gặp ở lượt trước. Dùng để
+    gắn tag ExpiresAt, hỗ trợ soát tài nguyên còn sót sau lượt lab.
   EOT
   type        = string
-  default     = ""
+}
+
+variable "operator_cidrs" {
+  description = <<-EOT
+    Danh sách CIDR /32 (hoặc rộng hơn nếu cần) của IP operator được phép truy
+    cập EKS public endpoint (CKV_AWS_38). KHÔNG có default và KHÔNG tự động dò
+    IP qua data "http" — để plan deterministic giữa local và CI (Acceptance
+    §7.5: "terraform plan -out=tfplan → deterministic"). Operator tự lấy IP
+    hiện tại (vd `curl -s https://checkip.amazonaws.com`) rồi truyền qua
+    -var hoặc TF_VAR_operator_cidrs mỗi lần apply thật.
+  EOT
+  type        = list(string)
+
+  validation {
+    condition     = alltrue([for c in var.operator_cidrs : c != "0.0.0.0/0" && c != "::/0"])
+    error_message = "operator_cidrs không được chứa 0.0.0.0/0 hoặc ::/0 — phải là CIDR hẹp của IP operator (CKV_AWS_38)."
+  }
 }
 
 variable "vpc_cidr" {
@@ -112,7 +129,6 @@ locals {
     managed_by  = "terraform"
     Class       = "DO2603"
     LabId       = "day3-terraform"
-    Owner       = var.owner
     ExpiresAt   = var.expires_at
   }
 }

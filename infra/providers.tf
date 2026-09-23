@@ -18,10 +18,6 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
-    http = {
-      source  = "hashicorp/http"
-      version = "~> 3.4"
-    }
   }
 }
 
@@ -43,12 +39,17 @@ data "aws_eks_cluster" "lab" {
   name = aws_eks_cluster.lab.name
 }
 
-data "aws_eks_cluster_auth" "lab" {
-  name = aws_eks_cluster.lab.name
-}
-
 provider "kubernetes" {
   host                   = data.aws_eks_cluster.lab.endpoint
   cluster_ca_certificate = base64decode(data.aws_eks_cluster.lab.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.lab.token
+
+  # exec thay vì data.aws_eks_cluster_auth.lab.token: token tĩnh của data
+  # source chỉ sống ~15 phút kể từ lúc refresh, có thể hết hạn giữa chừng
+  # apply dài (EKS cluster+node group từng mất >30 phút thực tế). exec gọi
+  # `aws eks get-token` lại mỗi lần provider cần auth, luôn lấy token mới.
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", aws_eks_cluster.lab.name, "--region", var.aws_region]
+  }
 }

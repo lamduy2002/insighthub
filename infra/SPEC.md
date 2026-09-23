@@ -41,12 +41,15 @@ lại (web/api/ingestion-worker) chạy trên EKS tự tạo.
 | Resource | Ghi chú |
 |---|---|
 | `aws_vpc.lab` | CIDR `10.20.0.0/16` |
-| `aws_subnet.public[*]` (×2) | 2 AZ khác nhau: `ap-southeast-1a`, `ap-southeast-1b`; cả 2 đều **public** (có route tới Internet Gateway) |
+| `aws_subnet.public[*]` (×2) | 2 AZ khác nhau: `ap-southeast-1a`, `ap-southeast-1b`; có route tới Internet Gateway — dùng cho EKS cluster/node group |
+| `aws_subnet.private[*]` (×2) | Cùng 2 AZ, CIDR riêng (`cidrsubnet(vpc_cidr, 8, idx+2)`); **không** route ra IGW/NAT — dùng cho RDS/Redis (MH5) |
 | `aws_internet_gateway.lab` | Gắn vào VPC trên |
-| `aws_route_table.public` + `aws_route_table_association[*]` | Route `0.0.0.0/0` → IGW; associate cả 2 subnet |
+| `aws_route_table.public` + `aws_route_table_association[*]` | Route `0.0.0.0/0` → IGW; associate 2 subnet public |
+| `aws_route_table.private` + `aws_route_table_association[*]` | Không route block nào (chỉ route `local` AWS tự thêm ngầm định) — associate 2 subnet private |
 
-Không tạo NAT Gateway để tiết kiệm chi phí — vì cả 2 subnet đều public,
-EKS node group được gán public IP để tự ra internet không cần NAT.
+Không tạo NAT Gateway: EKS node group vẫn ở subnet public (gán public IP tự
+ra internet); RDS/Redis chuyển sang subnet private nhưng không cần ra
+internet nên route table private không cần NAT — chi phí thêm $0.
 
 ### Compute
 
@@ -64,8 +67,8 @@ EKS node group được gán public IP để tự ra internet không cần NAT.
 |---|---|
 | `aws_db_instance.postgres` | PostgreSQL 16, pgvector, `storage_encrypted = true`, `publicly_accessible = false` |
 | `aws_elasticache_replication_group.redis` | Redis 7 |
-| `aws_db_subnet_group.lab` | Dùng 2 subnet mới tạo |
-| `aws_elasticache_subnet_group.lab` | Dùng 2 subnet mới tạo |
+| `aws_db_subnet_group.lab` | Dùng 2 subnet **private** (MH5) |
+| `aws_elasticache_subnet_group.lab` | Dùng 2 subnet **private** (MH5) |
 | `aws_security_group.data` | Riêng cho RDS/Redis — ingress chỉ cho phép từ security group của EKS node group |
 
 ### Load Balancing (không phải Terraform quản lý trực tiếp)
@@ -87,21 +90,78 @@ phần Helm/kubectl, không nằm trong `.tf`.
 | Resource | Ghi chú |
 |---|---|
 | `aws_secretsmanager_secret.db` + `aws_secretsmanager_secret_version.db` | DB credentials; pod đọc qua IRSA, không hardcode |
+| `aws_secretsmanager_secret.redis` + `aws_secretsmanager_secret_version.redis` | Redis auth_token; pod đọc qua IRSA |
+
+### Kubernetes — namespace, ServiceAccount, IRSA app (MH3/MH6, §2.3)
+
+| Resource | Ghi chú |
+|---|---|
+| `kubernetes_namespace.insighthub_dev` | Tên `insighthub-${var.environment}` (MH3) |
+| `aws_iam_role.insighthub_app` | Trust `system:serviceaccount:insighthub-<env>:insighthub` qua OIDC provider của EKS (không phải OIDC GitHub Actions) |
+| `aws_iam_role_policy.insighthub_app_secrets` | Chỉ `secretsmanager:GetSecretValue` + `DescribeSecret`, đúng 2 ARN secret db/redis — không dùng `*` |
+| `kubernetes_service_account.insighthub` | Namespace `insighthub-<env>`, annotation IRSA trỏ role trên (MH6) |
+| `kubernetes_service_account.alb_controller` | Namespace `kube-system`, thay cho `infra/k8s/alb-controller-sa.yaml` (đã xóa) — annotation lấy động từ `aws_iam_role.alb_controller.arn`, không hardcode |
+
+Provider `kubernetes` dùng `exec` auth (gọi `aws eks get-token` mỗi lần cần,
+không dùng token tĩnh từ data source) để tránh hết hạn token giữa apply dài
+(EKS+node group từng mất >30 phút thực tế) — xem `providers.tf`.
+
+### Container Registry (ECR — chuẩn bị cho MH10)
+
+| Resource | Ghi chú |
+|---|---|
+| `aws_ecr_repository.app["api"]`, `["web"]`, `["ingestion-worker"]` | `image_tag_mutability = "IMMUTABLE"`, `scan_on_push = true`, `force_delete = true` (xóa sạch theo lượt lab, kể cả còn image) |
+
+### CI/CD Bootstrap — `infra/bootstrap/github-oidc/` (module riêng, KHÔNG theo lượt lab)
+
+GitHub Actions OIDC là resource **cấp account dùng chung cả lớp DO2603**
+(AWS chỉ cho phép 1 provider/URL issuer/account) — tách khỏi state chính để
+không bị `terraform destroy` theo lượt lab xóa nhầm. Backend S3 cùng bucket,
+key riêng `insighthub/bootstrap/github-oidc.tfstate`.
+
+| Resource | Ghi chú |
+|---|---|
+| `aws_iam_openid_connect_provider.github_actions` | `lifecycle { prevent_destroy = true }`; thumbprint tính động qua `data.tls_certificate`, không hardcode |
+| `aws_iam_role.gh_plan` | Trust `repo:lamduy2002/insighthub:pull_request`; `ReadOnlyAccess` + đọc 2 secret app + đọc/ghi state (gồm `.tflock`) |
+| `aws_iam_role.gh_apply` | Trust `repo:lamduy2002/insighthub:environment:production`; CRUD scoped theo resource type module chính, có `iam:PassRole` cho 2 role EKS, KHÔNG AdministratorAccess |
+
+Trước khi tạo đã chạy `aws iam list-open-id-connect-providers` xác nhận
+account chưa có provider `token.actions.githubusercontent.com` nào (chỉ có
+6 provider OIDC của EKS cluster học viên khác) — an toàn để tạo mới thay vì
+import. Nếu học viên khác tạo song song và gặp `EntityAlreadyExists`: **không
+sửa code tạo lại** — chạy `terraform import aws_iam_openid_connect_provider.github_actions
+arn:aws:iam::<account_id>:oidc-provider/token.actions.githubusercontent.com`
+rồi apply lại.
+
+**Trước khi gỡ provider này ở cuối Day 3**: bắt buộc chạy `aws iam list-roles`
+rồi lọc từng `AssumeRolePolicyDocument` xem còn role nào khác (của học viên
+khác) đang trust ARN provider này không — chỉ gỡ khi chắc chắn không còn ai
+trust. Không gỡ nếu chưa kiểm tra, vì sẽ làm gãy CI của học viên khác nếu họ
+cũng dùng chung provider.
 
 ### Tagging
 
-`local.common_tags` (project, environment, owner, cost_center, managed_by)
-áp cho **mọi** resource Terraform tự tạo ở trên (VPC, subnet, IGW, route
-table, EKS, node group, IAM role, RDS, Redis, security group, secret). Không
-còn khái niệm "VPC chung không tự tag" — không áp dụng vì đã đổi hướng sang
-tự tạo VPC riêng.
+`local.common_tags` (project, environment, owner, cost_center, managed_by,
+Class, LabId, ExpiresAt) áp cho **mọi** resource Terraform tự tạo ở trên (VPC,
+subnet, IGW, route table, EKS, node group, IAM role, RDS, Redis, security
+group, secret, ECR, K8s namespace/ServiceAccount). Tag `owner` dùng **chữ
+thường** (không phải `Owner`) — AWS coi tag key case-insensitive nên giá trị
+này đáp ứng đồng thời cả spec §7.3 (đòi `owner`) và Guide Local/AWS Cost (đòi
+`Owner`); dùng cả 2 case cùng lúc từng gây lỗi thật `InvalidInput: Duplicate
+tag keys found` trên IAM role. `expires_at` không còn default rỗng — bắt buộc
+truyền giá trị ISO 8601 thật mỗi lần apply (`var.expires_at` không default).
+
+Module bootstrap (`infra/bootstrap/github-oidc/`) dùng tag riêng
+(`LabId = "bootstrap-github-oidc"`, thêm `Persistent = "true"`, không có
+`ExpiresAt`) vì không xóa theo lượt lab — không nằm trong phạm vi tagging
+theo lượt như hạ tầng chính.
 
 Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
 `infra/outputs.tf`, `infra/providers.tf`, `infra/backend.tf`.
 
 ## 3. Ràng buộc bắt buộc (copy nguyên văn từ spec §7.3/7.4)
 
-- RDS/Redis: encrypted, không public (publicly_accessible=false ở RDS, không gán endpoint public cho Redis); đặt trong VPC/subnet tự tạo tại Mục 2 (không có private subnet thật — bù đắp bằng Security Group chỉ cho phép ingress từ SG của EKS node group, không có rule 0.0.0.0/0 nào).
+- RDS/Redis: encrypted, không public (publicly_accessible=false ở RDS, không gán endpoint public cho Redis); đặt trong 2 **private subnet** tự tạo tại Mục 2 (không route ra IGW/NAT, MH5), cộng thêm Security Group chỉ cho phép ingress từ SG của EKS node group, không có rule 0.0.0.0/0 nào.
 - IRSA: ServiceAccount + IAM Role, không dùng IAM user.
 - Backend Terraform: S3 + `use_lockfile` (native state locking, Terraform ≥1.10) — không DynamoDB lock.
 - Tag bắt buộc mọi resource: `project`, `environment`, `owner`, `cost_center`, `managed_by`.
@@ -220,6 +280,21 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
     `terraform destroy` cluster, đúng thứ tự trong
     `docs/Guide_Local_AWS_Cost_DO2603.md`. Nếu bỏ qua bước này, ALB có thể bị
     bỏ sót và tiếp tục tính phí dù EKS đã bị xóa.
+- **Thứ tự teardown đầy đủ** (bắt buộc theo đúng trình tự, không đảo —
+  provider `kubernetes` phụ thuộc cluster còn sống, xem rủi ro provider ở
+  `providers.tf`; Guide cấm `terraform state rm`/force-remove finalizer để né
+  lỗi dependency):
+  1. `helm uninstall` app (web/api/worker) trong namespace `insighthub-<env>`.
+  2. Chờ ALB do Ingress tạo bị xóa hẳn — poll `aws elbv2 describe-load-balancers`
+     tới khi không còn ALB nào gắn tag cluster này (K8s cần vài phút để
+     controller dọn ALB sau khi Ingress bị xóa).
+  3. Xóa record Route53 (nếu đã trỏ domain `do2603.click` cho HTTPS).
+  4. `helm uninstall` External Secrets Operator (nếu đã cài) + `aws-load-balancer-controller`.
+  5. `terraform destroy -target=kubernetes_service_account.insighthub -target=kubernetes_service_account.alb_controller -target=kubernetes_namespace.insighthub_dev` — xóa resource Kubernetes trong khi cluster còn sống (bắt buộc làm trước, xem rủi ro provider ở `providers.tf`).
+  6. `terraform destroy` toàn bộ (EKS, RDS, Redis, VPC, IAM, KMS, ECR, Secrets Manager).
+  7. (Chỉ cuối Day 3, không phải mỗi lượt) gỡ inline policy tự cấp cho `DE000215`
+     (`do2603-lamduy2002-additional-permissions`) — sau khi xác nhận không còn
+     apply/destroy nào cần dùng nữa.
 - **CI dùng OIDC AWS**, trust bound repo/ref/environment, không lưu access
   key dài hạn.
 
@@ -232,17 +307,19 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
 
 ## 10. Accepted Risks — Checkov Findings
 
-Chạy `checkov -d infra/` (2026-09-22) sau khi đã sửa 6 finding quan trọng
-(CKV_AWS_382, CKV_AWS_38, CKV_AWS_58, CKV2_AWS_12, CKV_AWS_30, CKV_AWS_31 —
-xem chi tiết cách sửa trong `main.tf`) còn lại **17 check ID** (19 dòng, vì
-2 check áp dụng cho cả 2 Secrets Manager secret `db` và `redis`) chưa pass.
-Đây là các finding **chấp nhận rủi ro có chủ đích cho lab**, không phải bỏ
-sót — lý do cụ thể theo từng nhóm:
+Chạy `checkov -d infra/` (2026-09-22, sau khi đã sửa 6 finding quan trọng ban
+đầu: CKV_AWS_382, CKV_AWS_38, CKV_AWS_58, CKV2_AWS_12, CKV_AWS_30, CKV_AWS_31)
+còn lại 19 dòng chưa pass. **Chạy lại sau khi thêm private subnet/K8s
+namespace-SA/ECR/module bootstrap OIDC (2026-09-23) — tổng 28 check FAILED**
+(153 passed): 19 finding cũ giữ nguyên (không cái nào tự hết nhờ thay đổi lần
+này) + **9 finding mới phát sinh** từ resource mới thêm. Đây là các finding
+**chấp nhận rủi ro có chủ đích cho lab**, không phải bỏ sót — lý do cụ thể
+theo từng nhóm:
 
 | Check ID | Resource | Lý do chấp nhận |
 |---|---|---|
 | CKV_AWS_130 | `aws_subnet.public` | Kiến trúc lab cố ý dùng subnet public, không NAT Gateway, để tiết kiệm chi phí (đã chốt tại Mục 0(b)/Mục 2). |
-| CKV_AWS_39 | `aws_eks_cluster.lab` | Đã giảm thiểu tối đa bằng `public_access_cidrs` giới hạn đúng 1 IP của operator (CKV_AWS_38 đã PASS), nhưng không thể tắt hoàn toàn `endpoint_public_access` vì kiến trúc hiện tại không có private subnet/VPN/bastion để truy cập control plane — cần hạ tầng bổ sung (VPN/bastion), ngoài phạm vi Day 3. |
+| CKV_AWS_39 | `aws_eks_cluster.lab` | Đã giảm thiểu bằng `public_access_cidrs = var.operator_cidrs` (bắt buộc CIDR hẹp, có `validation` chặn `0.0.0.0/0`), nhưng không thể tắt hoàn toàn `endpoint_public_access` vì kiến trúc hiện tại không có VPN/bastion để truy cập control plane — cần hạ tầng bổ sung, ngoài phạm vi Day 3. |
 | CKV_AWS_37 | `aws_eks_cluster.lab` | Bật full control-plane logging phát sinh chi phí CloudWatch Logs liên tục; production-grade observability, không cần cho lab ngắn hạn theo lượt. |
 | CKV_AWS_118 | `aws_db_instance.postgres` | RDS Enhanced Monitoring tăng chi phí, cần thêm IAM role riêng; không cần cho việc kiểm chứng ingestion pipeline trong lượt lab. |
 | CKV_AWS_226 | `aws_db_instance.postgres` | Cố ý pin `engine_version = "16.15"` để đảm bảo reproducibility trong lượt lab; tự động minor-upgrade có thể gây gián đoạn ngoài dự kiến giữa buổi. |
@@ -258,6 +335,16 @@ sót — lý do cụ thể theo từng nhóm:
 | CKV2_AWS_60 | `aws_db_instance.postgres` | Không áp dụng thực tế: `skip_final_snapshot = true` nên lab không tạo snapshot nào để copy tag. |
 | CKV2_AWS_57 | `aws_secretsmanager_secret.db`, `aws_secretsmanager_secret.redis` | Automatic rotation cần Lambda rotation riêng + wiring mạng/IAM bổ sung — ngoài phạm vi Day 3; secret chỉ sống trong thời gian lượt lab rồi bị xóa (`recovery_window_in_days = 0`). |
 | CKV2_AWS_50 | `aws_elasticache_replication_group.redis` | Multi-AZ automatic failover cần ≥2 cache cluster (replica), tăng gấp đôi chi phí Redis; lab cố ý dùng `num_cache_clusters = 1` (SPEC Mục 2: "không cần replica"). |
+
+**9 finding mới (2026-09-23), phát sinh từ private subnet/K8s/ECR/bootstrap OIDC:**
+
+| Check ID | Resource | Lý do chấp nhận |
+|---|---|---|
+| CKV_AWS_38 | `aws_eks_cluster.lab` | **Regression so với bản trước** — trước đây `public_access_cidrs` lấy từ `data.http.my_ip` (giá trị cụ thể, checkov resolve được nên PASS); giờ đổi sang `var.operator_cidrs` không default (Acceptance §7.5 đòi plan deterministic) nên checkov không resolve tĩnh được giá trị thật, coi như chưa chắc chắn không phải `0.0.0.0/0` dù đã có `validation` block chặn ở Terraform layer. Checkov không đọc được `validation` block của biến. |
+| CKV_AWS_136 ×3 | `aws_ecr_repository.app["api"\|"web"\|"ingestion-worker"]` | ECR mặc định mã hóa `AES256` (SSE-S3 managed) đã đủ cho image lab tồn tại ngắn hạn; CMK riêng thêm chi phí/độ phức tạp quản lý key không cần thiết — cùng lý do đã chấp nhận cho CKV_AWS_191/149 ở trên. |
+| CKV_AWS_355 ×2 | `aws_iam_role_policy.gh_apply_network`, `gh_apply_data` (bootstrap) | EC2 (VPC/subnet/IGW/route table/SG) và phần lớn action ElastiCache/KMS không hỗ trợ Resource-level ARN cho `Create*/Delete*/Modify*` trước khi resource tồn tại — bắt buộc `Resource = "*"`, đã giới hạn đúng bộ action cần (không dùng `ec2:*`/`kms:*`). |
+| CKV_AWS_290 ×2 | như trên | Cùng nguyên nhân CKV_AWS_355 — action ghi (Create/Delete/Modify) đi kèm `Resource = "*"` do giới hạn API, không phải thiếu ràng buộc chủ ý. |
+| CKV_AWS_289 | `aws_iam_role_policy.gh_apply_data` (bootstrap) | `kms:PutKeyPolicy`/`kms:CreateGrant` bị coi là "permissions management" — bắt buộc do KMS API yêu cầu `Resource = "*"` cho các action này trước khi key tồn tại, đã giới hạn còn lại ở mức statement riêng theo service. |
 
 **Lưu ý về CKV_AWS_39**: đây là finding duy nhất trong 6 finding được giao ban
 đầu **không đóng hoàn toàn** được — lý do đã ghi ở bảng trên. Nếu cần đóng

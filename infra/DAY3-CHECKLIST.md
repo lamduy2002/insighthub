@@ -15,18 +15,18 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 |---|---|---|---|
 | MH1 | `infra/` đủ main.tf/variables.tf/outputs.tf/providers.tf | dòng 825 | ✅ xong |
 | MH2 | Backend S3 + `use_lockfile` | dòng 826 | ✅ xong (`infra/backend.tf`) |
-| MH3 | EKS namespace resource | dòng 827 | ❌ chưa làm — không có `kubernetes_namespace` nào trong `infra/*.tf` |
+| MH3 | EKS namespace resource | dòng 827 | ✅ code xong — `kubernetes_namespace.insighthub_dev` (`main.tf`), xác nhận qua `terraform plan` (chưa apply) |
 | MH4 | RDS PostgreSQL 16, encrypted, not public | dòng 828 | ✅ xong (`storage_encrypted=true`, `publicly_accessible=false`) |
-| MH5 | ElastiCache Redis 7, **private subnet** | dòng 829 | ⚠️ sai (nhưng khả thi $0) — hiện dùng `aws_subnet.public`; private subnet cho RDS/Redis **không cần NAT Gateway** (RDS/Redis không cần ra internet), chỉ cần subnet không gắn route IGW → chi phí thêm $0, không phải đánh đổi chi phí. Cần sửa. |
-| MH6 | IRSA: ServiceAccount + IAM Role binding | dòng 830, verify bằng `kubectl describe sa insighthub` | ⚠️ một phần — có IRSA cho `aws-load-balancer-controller`, **chưa có SA tên `insighthub`** cho chính app |
-| MH7 | `.github/workflows/iac.yml` | dòng 831 | ❌ chưa làm — chỉ có `starter.yml` |
+| MH5 | ElastiCache Redis 7, **private subnet** | dòng 829 | ✅ code xong — thêm `aws_subnet.private[*]` (2 AZ, route table riêng không IGW/NAT, chi phí $0), `aws_db_subnet_group`/`aws_elasticache_subnet_group` đã chuyển sang subnet này. EKS cluster/node group giữ nguyên public. Chưa apply. |
+| MH6 | IRSA: ServiceAccount + IAM Role binding | dòng 830, verify bằng `kubectl describe sa insighthub` | ✅ code xong — `kubernetes_service_account.insighthub` + `aws_iam_role.insighthub_app` (trust `system:serviceaccount:insighthub-dev:insighthub`, chỉ `secretsmanager:GetSecretValue`+`DescribeSecret` đúng 2 ARN secret). Chưa apply nên chưa `kubectl describe` được thật. |
+| MH7 | `.github/workflows/iac.yml` | dòng 831 | ❌ chưa làm — chỉ có `starter.yml`; bootstrap IAM/OIDC đã xong (`infra/bootstrap/github-oidc/`) nhưng workflow YAML chưa viết |
 | MH8 | Pipeline jobs fmt→lint→scan→policy→plan→cost→apply | dòng 832 | ❌ chưa làm |
 | MH9 | Pipeline green trên PR | dòng 833 | ❌ chưa làm |
-| MH10 | InsightHub Helm deploy | dòng 834 | ❌ chưa làm — không có chart nào trong repo |
+| MH10 | InsightHub Helm deploy | dòng 834 | ❌ chưa làm — không có chart nào trong repo; ECR repo đã có code (chưa apply) để sau này push image |
 | MH11 | Smoke test upload+chat | dòng 835 | ❌ chưa làm |
-| MH12 | `tflint --recursive` no warnings | dòng 836 | ✅ xong — đã chạy lại: 0 errors, 0 warnings |
-| MH13 | `checkov` no HIGH | dòng 837 | ⚠️ chưa xác minh được — checkov OSS local không trả `severity`; 19 finding failed, tất cả đã ghi lý do chấp nhận rủi ro tại `infra/SPEC.md:244-260` nhưng chưa có xác nhận độc lập "không HIGH" |
-| MH14 | All resources tagged | dòng 838 | ⚠️ sai — xem mục J (quyết định đã chốt) |
+| MH12 | `tflint --recursive` no warnings | dòng 836 | ✅ xong — đã chạy lại trên cả module chính + `infra/bootstrap/github-oidc/`: 0 errors, 0 warnings |
+| MH13 | `checkov` no HIGH | dòng 837 | ⚠️ chưa xác minh được severity — nay **28 finding failed** (19 cũ + 9 mới từ private subnet/ECR/bootstrap IAM), tất cả đã ghi lý do tại `infra/SPEC.md` mục 10 (bảng cũ + bảng "9 finding mới"); vẫn thiếu xác nhận độc lập "không HIGH" |
+| MH14 | All resources tagged | dòng 838 | ✅ áp dụng quyết định J.1 — `owner` (chữ thường) duy nhất trong `common_tags`, không còn `Owner`. Module bootstrap dùng tag scheme riêng có chủ đích (xem SPEC.md mục 2, phần Tagging) |
 
 ## B. Non-functional (§7.3, dòng 802-809)
 
@@ -34,9 +34,9 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 |---|---|---|
 | 1 | `tflint --recursive` no warnings | ✅ xong |
 | 2 | `checkov -d infra/` no HIGH | ⚠️ chưa xác minh severity |
-| 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ❌ chưa làm — không có file `.rego` nào trong repo |
-| 4 | Tags: project, environment, owner, cost_center, managed_by | ⚠️ sai — xem mục J |
-| 5 | Pipeline OIDC AWS (no long-lived keys) | ❌ chưa làm — chưa có `aws_iam_openid_connect_provider` cho `token.actions.githubusercontent.com`; mọi apply hôm nay dùng IAM user `DE000215` (long-lived key), hợp lệ cho thao tác thủ công nhưng pipeline CI/CD thật chưa setup |
+| 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ❌ chưa làm — không có file `.rego` nào trong repo (ngoài phạm vi lượt sửa Terraform này) |
+| 4 | Tags: project, environment, owner, cost_center, managed_by | ✅ áp dụng quyết định J.1 |
+| 5 | Pipeline OIDC AWS (no long-lived keys) | ⚠️ code xong, chưa apply — `infra/bootstrap/github-oidc/` có OIDC provider + 2 role (`gh_plan`/`gh_apply`), `terraform plan` sạch (10 to add); chưa apply nên GitHub Actions thật vẫn chưa dùng được. Mọi apply thủ công hôm nay vẫn qua IAM user `DE000215` (long-lived key), hợp lệ cho thao tác thủ công. |
 | 6 | Secret qua AWS Secrets Manager | ✅ xong |
 | 7 | Infracost dự toán | ✅ xong (`infra/SPEC.md:209`, ngày 2026-09-22) |
 
@@ -48,12 +48,12 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | `terraform init -backend=true` → success | ✅ |
 | `terraform validate` → success | ✅ |
 | `tflint --recursive` → 0/0 | ✅ |
-| `checkov -d infra/` → no HIGH | ⚠️ chưa xác minh |
-| `terraform plan -out=tfplan` → deterministic | ✅ |
+| `checkov -d infra/` → no HIGH | ⚠️ chưa xác minh — nay 28 finding (xem mục A/MH13) |
+| `terraform plan -out=tfplan` → deterministic | ✅ **sửa thật** — trước đây dòng này bị đánh dấu ✅ nhầm: `public_access_cidrs` lấy từ `data.http.my_ip` khiến plan **không** deterministic (đổi theo IP mạng). Đã bỏ `data.http`, dùng `var.operator_cidrs` bắt buộc truyền — giờ plan mới thật sự deterministic. |
 | `conftest test --policy policy/terraform tfplan.json` → pass — **bắt buộc** | ❌ — path chưa tồn tại, chưa có Rego nào; xem mục H và J cho quyết định path |
 | `infracost breakdown --path infra/` | ✅ |
 | `gh run list --workflow=iac.yml` → ✓ | ❌ |
-| `kubectl get ns insighthub-dev` → exists | ❌ |
+| `kubectl get ns insighthub-dev` → exists | ❌ — namespace tên thật là `insighthub-dev` khi `var.environment=dev` (mã hoá `insighthub-${var.environment}`), code đã sẵn sàng, chưa apply |
 | `kubectl get pods -n insighthub-dev` → Ready | ❌ |
 | `curl .../healthz` → 200 | ❌ |
 | `curl -X POST .../documents` → 202 | ❌ |
@@ -64,14 +64,14 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 
 | Thành phần | Trạng thái |
 |---|---|
-| EKS namespace `insighthub-<env>` | ❌ chưa làm |
-| Deployment `web` + Service | ❌ chưa làm |
-| Deployment `api` + Service + **HPA** + **Ingress (TLS)** | ❌ chưa làm — HPA cần `metrics-server` cài trước (xem mục K) |
-| Deployment `ingestion-worker` | ❌ chưa làm |
+| EKS namespace `insighthub-<env>` | ✅ code xong (`kubernetes_namespace.insighthub_dev`), chưa apply |
+| Deployment `web` + Service | ❌ chưa làm (Helm chart) |
+| Deployment `api` + Service + **HPA** + **Ingress (TLS)** | ❌ chưa làm — HPA cần `metrics-server` cài trước (xem mục L) |
+| Deployment `ingestion-worker` | ❌ chưa làm (Helm chart) |
 | Helm values + ConfigMap + Secret | ❌ chưa làm |
-| RDS PostgreSQL 16 + pgvector | ✅ đã có trong Terraform (đã teardown, plan vẫn còn) |
-| ElastiCache Redis 7 | ✅ đã có trong Terraform (đã teardown, plan vẫn còn) |
-| IAM roles for service accounts (IRSA) | ⚠️ một phần — chỉ ALB controller, chưa có IRSA cho app |
+| RDS PostgreSQL 16 + pgvector | ✅ đã có trong Terraform, nay subnet **private** (MH5), chưa apply |
+| ElastiCache Redis 7 | ✅ đã có trong Terraform, nay subnet **private** (MH5), chưa apply |
+| IAM roles for service accounts (IRSA) | ✅ code xong — ALB controller + app (`insighthub`), chưa apply |
 
 ## E. Yêu cầu verifier — 5 câu trả lời (trích dòng code)
 
@@ -95,7 +95,7 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 | Yêu cầu | Nguồn | Trạng thái |
 |---|---|---|
 | `lab-manifest.json` lập **TRƯỚC** khi apply | dòng 25 | ❌ sai quy trình — đã lập **BÙ SAU** (`evidence/day3-lab1-manifest.json`), đã ghi nhận trung thực trong chính file đó |
-| Tag `Class, LabId, Owner, ExpiresAt` | dòng 27 | ⚠️ một phần — có đủ 4 key, nhưng `ExpiresAt` đang **rỗng** (`var.expires_at` default `""`, `infra/variables.tf:40`, chưa từng truyền `-var="expires_at=..."` lúc apply) → cần set giá trị thật (ISO 8601) mỗi lần apply thật |
+| Tag `Class, LabId, Owner, ExpiresAt` | dòng 27 | ✅ code xong — `var.expires_at` **không còn default `""`**, bắt buộc truyền `-var`/`TF_VAR_expires_at` mỗi lần apply (Terraform tự chặn nếu thiếu). Đã test plan với `expires_at=2026-09-23T23:59:00+07:00` thành công. `Owner` (viết hoa) đã bỏ theo quyết định J.1 (dùng `owner` chữ thường, case-insensitive nên vẫn đáp ứng Guide). |
 | Teardown + evidence trước/sau | dòng 187-190 (SPEC.md) | ✅ xong — inventory before/after, teardown sạch 34/34, 0 orphan |
 | Gỡ inline policy tự cấp sau lượt cuối | suy từ mục "Kiểm tra tài nguyên còn sót" | ❌ chưa gỡ — đang giữ vì còn 1 lượt apply cuối cần dùng (đã ghi rõ trong manifest) |
 
@@ -123,13 +123,16 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 
 ## I. Mâu thuẫn giữa các tài liệu (phát hiện được)
 
-1. **Đường dẫn Conftest policy**: §2.5 dòng 250 ghi `infra/policies/ # Conftest Rego`, §7.5 dòng 862 ghi lệnh dùng `policy/terraform`. Hai path khác nhau cho cùng khái niệm. `scripts/verify.py` không dùng path nào cả (không gọi conftest trực tiếp) nên mâu thuẫn này không ảnh hưởng kết quả tự động, nhưng ảnh hưởng việc học viên chọn vị trí đặt file. → **Đã có quyết định giải quyết, xem mục J.2.**
-2. **Tag `owner` vs `Owner`**: §7.3 dòng 806 đòi tag key `owner` (chữ thường) trong bộ 5 tag `project, environment, owner, cost_center, managed_by`. `docs/Guide_Local_AWS_Cost_DO2603.md:27` đòi tag key `Owner` (viết hoa) trong bộ 4 tag `Class, LabId, Owner, ExpiresAt`. Hai bộ tag gần như tách biệt, cùng khái niệm "chủ sở hữu" nhưng khác case — IAM API coi `owner`/`Owner` là trùng key (case-insensitive), đã gặp lỗi thật `InvalidInput: Duplicate tag keys found` khi thử áp cả hai cùng lúc. → **Đã có quyết định giải quyết, xem mục J.1.**
+1. **Đường dẫn Conftest policy**: §2.5 dòng 250 ghi `infra/policies/ # Conftest Rego`, §7.5 dòng 862 ghi lệnh dùng `policy/terraform`. Hai path khác nhau cho cùng khái niệm. `scripts/verify.py` không dùng path nào cả (không gọi conftest trực tiếp) nên mâu thuẫn này không ảnh hưởng kết quả tự động, nhưng ảnh hưởng việc học viên chọn vị trí đặt file. → **Đã quyết định (J.2), chưa viết Rego (nằm ngoài lượt sửa Terraform này).**
+2. **Tag `owner` vs `Owner`**: §7.3 dòng 806 đòi tag key `owner` (chữ thường) trong bộ 5 tag `project, environment, owner, cost_center, managed_by`. `docs/Guide_Local_AWS_Cost_DO2603.md:27` đòi tag key `Owner` (viết hoa) trong bộ 4 tag `Class, LabId, Owner, ExpiresAt`. Hai bộ tag gần như tách biệt, cùng khái niệm "chủ sở hữu" nhưng khác case — IAM API coi `owner`/`Owner` là trùng key (case-insensitive), đã gặp lỗi thật `InvalidInput: Duplicate tag keys found` khi thử áp cả hai cùng lúc. → **✅ Đã sửa code theo J.1** (`infra/variables.tf`, `common_tags` chỉ còn `owner` chữ thường).
 
 ## J. Quyết định đã chốt
 
-1. **Tag owner**: dùng **`owner`** (chữ thường) trong `common_tags`, **bỏ** `Owner` (viết hoa). Lý do: IAM (và hầu hết AWS service) coi tag key case-insensitive, nên `owner` (chữ thường) **đáp ứng đồng thời cả 2 tài liệu** — §7.3 đòi đúng literal `owner`, còn Guide đòi `Owner` nhưng do case-insensitive nên cùng một key vật lý trên AWS. Tránh được bug "Duplicate tag keys" đã gặp trước đây (không được có cả 2 case cùng lúc).
-2. **Vị trí Rego + lệnh Conftest**: đặt tại **`infra/policy/terraform/`**, chạy `conftest` từ thư mục `infra/` — khi đó lệnh đúng y hệt §7.5 (`conftest test --policy policy/terraform tfplan.json`, chạy relative từ `infra/`), đồng thời vẫn nằm trong `infra/` theo tinh thần §2.5 (`infra/policies` — khác tên số ít/nhiều nhưng cùng ý định đặt policy trong `infra/`).
+1. **Tag owner**: dùng **`owner`** (chữ thường) trong `common_tags`, **bỏ** `Owner` (viết hoa). Lý do: IAM (và hầu hết AWS service) coi tag key case-insensitive, nên `owner` (chữ thường) **đáp ứng đồng thời cả 2 tài liệu** — §7.3 đòi đúng literal `owner`, còn Guide đòi `Owner` nhưng do case-insensitive nên cùng một key vật lý trên AWS. Tránh được bug "Duplicate tag keys" đã gặp trước đây (không được có cả 2 case cùng lúc). ✅ Đã áp dụng.
+2. **Vị trí Rego + lệnh Conftest**: đặt tại **`infra/policy/terraform/`**, chạy `conftest` từ thư mục `infra/` — khi đó lệnh đúng y hệt §7.5 (`conftest test --policy policy/terraform tfplan.json`, chạy relative từ `infra/`), đồng thời vẫn nằm trong `infra/` theo tinh thần §2.5 (`infra/policies` — khác tên số ít/nhiều nhưng cùng ý định đặt policy trong `infra/`). ⚠️ Đã quyết định, **chưa viết file Rego**.
+3. **Module bootstrap GitHub OIDC tách riêng**: `infra/bootstrap/github-oidc/`, backend S3 cùng bucket khác key (`insighthub/bootstrap/github-oidc.tfstate`), `lifecycle { prevent_destroy = true }` trên OIDC provider — không destroy theo lượt lab vì là resource cấp account dùng chung cả lớp. ✅ Đã viết code + `terraform plan` sạch (10 to add), **chưa apply** (apply ở giai đoạn viết pipeline thật).
+4. **Bỏ `data.http.my_ip`, dùng `var.operator_cidrs` bắt buộc**: để `terraform plan` deterministic giữa local và CI (Acceptance §7.5) — trước đây plan **không** deterministic dù checklist từng đánh dấu ✅ nhầm (xem mục C). Thêm `validation` block chặn `0.0.0.0/0`/`::/0` (phòng thủ thêm, dù checkov không đọc được validation block — xem SPEC.md mục 10, finding CKV_AWS_38 mới). ✅ Đã áp dụng.
+5. **Provider kubernetes dùng `exec` auth**: thay `data.aws_eks_cluster_auth.lab.token` (tĩnh, hết hạn ~15 phút) bằng `exec { command = "aws", args = ["eks", "get-token", ...] }` — tránh lỗi token hết hạn giữa apply dài (EKS+node group từng mất >30 phút thực tế). Rủi ro B (cluster đã bị xóa khi plan/destroy) **không có cách Terraform tự giải quyết** — xử lý bằng quy trình teardown 7 bước bắt buộc (SPEC.md mục 8), không phải code. ✅ Đã áp dụng.
 
 ## K. Thứ tự đóng băng source (source freeze) — bắt buộc để `ci_binding`/`verification-source` khớp
 
@@ -146,3 +149,9 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 ## L. Chuẩn bị trước khi deploy (bổ sung — không có mục riêng trong spec nhưng cần cho MH10/§2.3)
 
 - **Cài `metrics-server`** trước khi deploy HPA cho `api` (§2.3 dòng 196) — HPA không hoạt động nếu thiếu `metrics-server` để cung cấp CPU/memory metrics. Cần cài **cả trên minikube** (giai đoạn test offline, `minikube addons enable metrics-server`) **và trên EKS** (giai đoạn apply cuối, qua Helm chart `metrics-server` chính thức hoặc manifest components.yaml), vì đây là 2 cluster khác nhau, không tự động có sẵn.
+
+## M. Việc đã làm trong lượt sửa Terraform này (2026-09-23, KHÔNG apply)
+
+Toàn bộ thay đổi ở `infra/main.tf`, `infra/variables.tf`, `infra/providers.tf` + module mới `infra/bootstrap/github-oidc/`. Đã chạy `terraform fmt -check -recursive` (0 diff), `terraform validate` (cả 2 module), `tflint --recursive` (0/0), `checkov -d infra/` (153 passed / 28 failed, xem SPEC.md mục 10), `terraform plan` cho module chính (**47 to add**, state đang rỗng sau teardown lượt trước) và module bootstrap (**10 to add**). Không có lệnh `apply` nào chạy.
+
+Chưa làm trong lượt này (nằm ngoài phạm vi "chỉ Terraform"): file Rego (`infra/policy/terraform/`), `tests/milestones/day3/test_*.py`, `.github/workflows/iac.yml`, Helm chart, `ai-prompts/day3.md`, `lab-manifest.json` lập trước (vẫn còn nợ từ lượt trước).

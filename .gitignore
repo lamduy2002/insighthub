@@ -28,6 +28,8 @@ yarn-error.log*
 !*.tfvars.example
 infra/tfplan
 infra/*.tfplan
+infra/**/tfplan
+infra/**/*.tfplan
 infra/.infracost/
 
 # --- IDE / OS ---

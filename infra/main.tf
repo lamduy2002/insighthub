@@ -68,6 +68,48 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+# Private subnet cho RDS/Redis (MH5) — idx 2/3 để không trùng CIDR 2 subnet
+# public (idx 0/1). Không NAT Gateway: RDS/Redis không cần ra internet, chỉ
+# cần giao tiếp nội bộ VPC (route local ngầm định AWS tự thêm cho mọi route
+# table, không cần khai báo) — chi phí thêm $0 so với dùng subnet public.
+locals {
+  private_subnet_cidrs = {
+    for idx, az in var.availability_zones :
+    az => cidrsubnet(var.vpc_cidr, 8, idx + 2)
+  }
+}
+
+resource "aws_subnet" "private" {
+  for_each = local.private_subnet_cidrs
+
+  vpc_id                  = aws_vpc.lab.id
+  availability_zone       = each.key
+  cidr_block              = each.value
+  map_public_ip_on_launch = false
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-private-${each.key}"
+  })
+}
+
+# Route table riêng, KHÔNG có route ra IGW/NAT — chỉ route local (VPC CIDR)
+# AWS tự thêm ngầm định cho mọi route table, đủ để RDS/Redis giao tiếp với
+# EKS node/control-plane trong cùng VPC.
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.lab.id
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-private-rt"
+  })
+}
+
+resource "aws_route_table_association" "private" {
+  for_each = aws_subnet.private
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.private.id
+}
+
 # Khóa default SG của VPC (CKV2_AWS_12) — không khai ingress/egress nào =>
 # Terraform revoke hết rule allow-all mặc định. Không resource nào trong
 # main.tf gán vào default SG này (RDS/Redis dùng aws_security_group.data
@@ -85,13 +127,6 @@ resource "aws_default_security_group" "lab" {
 # (SPEC.md Mục 2: Compute)
 # ============================================================
 
-# IP public hiện tại của máy chạy Terraform — dùng để giới hạn
-# public_access_cidrs của EKS endpoint (CKV_AWS_38). Phải chạy lại
-# `terraform apply` mỗi khi đổi mạng/IP, vì đây là whitelist theo IP thật.
-data "http" "my_ip" {
-  url = "https://checkip.amazonaws.com/"
-}
-
 resource "aws_iam_role" "eks_cluster" {
   name = "${var.project_name}-eks-cluster-role"
 
@@ -103,8 +138,6 @@ resource "aws_iam_role" "eks_cluster" {
       Action    = "sts:AssumeRole"
     }]
   })
-
-  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
@@ -120,8 +153,9 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 data "aws_caller_identity" "current" {}
 
 resource "aws_kms_key" "eks" {
-  description         = "CMK cho EKS Secrets Encryption - ${var.eks_cluster_name}"
-  enable_key_rotation = true
+  description             = "CMK cho EKS Secrets Encryption - ${var.eks_cluster_name}"
+  enable_key_rotation     = true
+  deletion_window_in_days = 7
 
   # Policy tường minh (CKV2_AWS_64) — nội dung tương đương default policy
   # của AWS (root account full access, ủy quyền quản lý qua IAM) + thêm rõ
@@ -191,8 +225,6 @@ resource "aws_iam_role" "eks_node" {
       Action    = "sts:AssumeRole"
     }]
   })
-
-  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "eks_node_worker_policy" {
@@ -217,12 +249,16 @@ resource "aws_eks_cluster" "lab" {
   vpc_config {
     subnet_ids             = [for s in aws_subnet.public : s.id]
     endpoint_public_access = true
-    # endpoint_private_access không set — mặc định false, không cần vì
-    # không có private subnet (SPEC Mục 2/3).
+    # Bật thêm private access (ENI ngay trong VPC hiện có, không cần subnet
+    # riêng/NAT) để node group tự join cluster qua đường private trong VPC —
+    # public_access_cidrs hẹp (chỉ IP operator) chặn cả IP public của chính
+    # node nên node không join được nếu chỉ có public access.
+    endpoint_private_access = true
 
-    # Giới hạn endpoint public chỉ cho IP hiện tại của người vận hành lab
-    # (CKV_AWS_38) — thay vì mở 0.0.0.0/0 mặc định.
-    public_access_cidrs = ["${chomp(data.http.my_ip.response_body)}/32"]
+    # Giới hạn endpoint public chỉ cho IP của người vận hành lab (CKV_AWS_38)
+    # — thay vì mở 0.0.0.0/0 mặc định. Truyền qua var.operator_cidrs (không
+    # tự dò IP bằng data "http") để plan deterministic giữa local và CI.
+    public_access_cidrs = var.operator_cidrs
   }
 
   encryption_config {
@@ -332,7 +368,7 @@ resource "random_password" "db" {
 
 resource "aws_db_subnet_group" "lab" {
   name       = "${var.project_name}-db-subnet-group"
-  subnet_ids = [for s in aws_subnet.public : s.id]
+  subnet_ids = [for s in aws_subnet.private : s.id]
   tags       = local.common_tags
 }
 
@@ -361,7 +397,7 @@ resource "aws_db_instance" "postgres" {
 
 resource "aws_elasticache_subnet_group" "lab" {
   name       = "${var.project_name}-redis-subnet-group"
-  subnet_ids = [for s in aws_subnet.public : s.id]
+  subnet_ids = [for s in aws_subnet.private : s.id]
   tags       = local.common_tags
 }
 
@@ -481,4 +517,106 @@ resource "aws_iam_policy" "alb_controller" {
 resource "aws_iam_role_policy_attachment" "alb_controller" {
   role       = aws_iam_role.alb_controller.name
   policy_arn = aws_iam_policy.alb_controller.arn
+}
+
+# ServiceAccount cho ALB Controller — chuyển từ infra/k8s/alb-controller-sa.yaml
+# (apply thủ công qua kubectl) sang quản lý bằng Terraform, lấy ARN động từ
+# aws_iam_role.alb_controller thay vì hardcode trong YAML.
+resource "kubernetes_service_account" "alb_controller" {
+  metadata {
+    name      = "aws-load-balancer-controller"
+    namespace = "kube-system"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.alb_controller.arn
+    }
+  }
+
+  depends_on = [aws_eks_node_group.lab]
+}
+
+# ============================================================
+# Kubernetes — namespace app + IRSA cho pod (SPEC MH3/MH6, §2.3)
+# ============================================================
+
+resource "kubernetes_namespace" "insighthub_dev" {
+  metadata {
+    name = "insighthub-${var.environment}"
+  }
+
+  depends_on = [aws_eks_node_group.lab]
+}
+
+# IRSA cho pod app (web/api/worker) — đọc credential DB/Redis trực tiếp từ
+# Secrets Manager qua SDK, không cần mount Secret K8s plaintext lâu dài.
+resource "aws_iam_role" "insighthub_app" {
+  name = "${var.project_name}-app-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:insighthub-${var.environment}:insighthub"
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = local.common_tags
+}
+
+# Chỉ 2 action đọc secret, đúng 2 ARN secret của app — không dùng "*" hay
+# secretsmanager:* (MH6: least-privilege IRSA).
+resource "aws_iam_role_policy" "insighthub_app_secrets" {
+  name = "${var.project_name}-app-secrets-read"
+  role = aws_iam_role.insighthub_app.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret",
+      ]
+      Resource = [
+        aws_secretsmanager_secret.db.arn,
+        aws_secretsmanager_secret.redis.arn,
+      ]
+    }]
+  })
+}
+
+resource "kubernetes_service_account" "insighthub" {
+  metadata {
+    name      = "insighthub"
+    namespace = kubernetes_namespace.insighthub_dev.metadata[0].name
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.insighthub_app.arn
+    }
+  }
+}
+
+# ============================================================
+# ECR — image repository cho web/api/ingestion-worker (MH10 chuẩn bị)
+# ============================================================
+
+resource "aws_ecr_repository" "app" {
+  for_each = toset(["api", "web", "ingestion-worker"])
+
+  name                 = "${var.project_name}/${each.key}"
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = local.common_tags
 }
