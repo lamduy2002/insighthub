@@ -128,6 +128,13 @@ variable "redis_node_type" {
 variable "db_username" {
   description = "Username master cho RDS PostgreSQL. KHÔNG có default — bắt buộc truyền qua .tfvars (gitignore) hoặc TF_VAR_db_username, không hardcode trong mã nguồn."
   type        = string
+
+  # Quy tắc master username của RDS PostgreSQL; đồng thời bảo đảm username
+  # nhúng nguyên văn vào database_url (secret db-credentials) không cần encode.
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9_]{0,62}$", var.db_username))
+    error_message = "db_username phải bắt đầu bằng chữ cái, chỉ gồm chữ/số/_ và tối đa 63 ký tự."
+  }
 }
 
 # db_password: KHÔNG khai báo variable ở đây. Password sẽ được sinh tự động

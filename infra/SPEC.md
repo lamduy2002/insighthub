@@ -145,8 +145,8 @@ phần Helm/kubectl, không nằm trong `.tf`.
 
 | Resource | Ghi chú |
 |---|---|
-| `aws_secretsmanager_secret.db` + `aws_secretsmanager_secret_version.db` | DB credentials (username/password/host/port/dbname/sslmode); pod mount qua Secrets Store CSI Driver + AWS provider bằng IRSA, không hardcode |
-| `aws_secretsmanager_secret.redis` + `aws_secretsmanager_secret_version.redis` | Redis auth_token; cùng cơ chế CSI |
+| `aws_secretsmanager_secret.db` + `aws_secretsmanager_secret_version.db` | DB credentials (username/password/host/port/dbname/sslmode + **`database_url`** dựng sẵn bằng `urlencode(password)` và `?sslmode=require` — app chỉ đọc `DATABASE_URL`); pod mount qua Secrets Store CSI Driver + AWS provider bằng IRSA, không hardcode |
+| `aws_secretsmanager_secret.redis` + `aws_secretsmanager_secret_version.redis` | Redis auth_token (chỉ `[A-Za-z0-9-_]`, 32 ký tự) + host/port + **`redis_url`** `rediss://:<token>@<primary>:6379/0` — arq không unquote password nên token phải URL-safe (DAY3-CHECKLIST mục N.3/C2); cùng cơ chế CSI |
 
 `SecretProviderClass` + cài driver thuộc Helm chart (chưa viết); ARN secret
 lấy từ output core `db_secret_arn`/`redis_secret_arn`.

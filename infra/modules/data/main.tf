@@ -111,11 +111,15 @@ resource "aws_elasticache_subnet_group" "lab" {
   tags       = var.tags
 }
 
-# AWS không cho phép /, @, ", khoảng trắng trong auth_token của Redis AUTH.
+# Chỉ ký tự an toàn cho URL (chữ-số + "-_"): token được nhúng nguyên văn
+# vào redis_url (rediss://:<token>@host) và arq RedisSettings.from_dsn KHÔNG
+# unquote password — "#", "?", "[", "]" làm hỏng urlparse, còn token đã
+# percent-encode sẽ bị gửi nguyên chuỗi %XX nên AUTH fail. 32 ký tự từ 64
+# ký hiệu ≈ 192 bit, đủ mạnh; ElastiCache yêu cầu 16-128 ký tự in được.
 resource "random_password" "redis_auth" {
   length           = 32
   special          = true
-  override_special = "!#$%^&*()-_=+[]{}<>:?~"
+  override_special = "-_"
 }
 
 resource "aws_elasticache_replication_group" "redis" {
@@ -165,6 +169,11 @@ resource "aws_secretsmanager_secret_version" "db" {
     port     = 5432
     dbname   = "insighthub"
     sslmode  = "require"
+    # App (api/worker) chỉ đọc DATABASE_URL (psycopg conninfo) — dựng sẵn ở
+    # đây vì Helm/K8s không URL-encode được. libpq percent-decode password
+    # trong URI nên urlencode() giữ đúng giá trị. sslmode=require bắt buộc do
+    # rds.force_ssl = 1 (verify-full + CA bundle RDS là tùy chọn).
+    database_url = "postgresql://${var.db_username}:${urlencode(random_password.db.result)}@${aws_db_instance.postgres.address}:5432/insighthub?sslmode=require"
   })
 }
 
@@ -183,5 +192,9 @@ resource "aws_secretsmanager_secret_version" "redis" {
     auth_token = random_password.redis_auth.result
     host       = aws_elasticache_replication_group.redis.primary_endpoint_address
     port       = 6379
+    # App chỉ đọc REDIS_URL (arq RedisSettings.from_dsn). rediss:// = TLS,
+    # bắt buộc vì transit_encryption_enabled = true. Token URL-safe (xem
+    # random_password.redis_auth) nên nhúng nguyên văn, không encode.
+    redis_url = "rediss://:${random_password.redis_auth.result}@${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379/0"
   })
 }
