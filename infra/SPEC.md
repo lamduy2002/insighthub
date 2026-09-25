@@ -36,7 +36,48 @@ target v1 tại AGENTS.md §1 (5 services: web, api, postgres, redis,
 ingestion-worker) — postgres/redis chạy managed (RDS/ElastiCache), phần còn
 lại (web/api/ingestion-worker) chạy trên EKS tự tạo.
 
-### Network (Terraform tự tạo)
+### Cấu trúc root & state (refactor 2026-09-25)
+
+Terraform tách thành **3 root độc lập** (state riêng, cùng bucket
+`do2603-lamduy2002-insighthub-tfstate`, S3 native lock) + 4 module nội bộ:
+
+| Root | Thư mục | State key | Nội dung | Cần cluster sống để plan? |
+|---|---|---|---|---|
+| bootstrap | `infra/bootstrap/github-oidc/` | `insighthub/bootstrap/github-oidc.tfstate` | GitHub OIDC provider, role `gh_plan`/`gh_apply`, KMS key saved plan — cấp account, không destroy theo lượt | Không |
+| **core** | `infra/` (giữ MH1: `main.tf`/`variables.tf`/`outputs.tf`/`providers.tf`/`backend.tf`) | `insighthub/core/terraform.tfstate` | VPC/subnet, EKS + node group + OIDC provider EKS + access entry, KMS EKS, RDS + parameter group, Redis, Secrets Manager, ECR, IAM IRSA (app + ALB controller), security group. **Không có provider kubernetes / resource `kubernetes_*`** | Không |
+| **platform** | `infra/platform/` | `insighthub/platform/terraform.tfstate` | Namespace `insighthub-dev`, ServiceAccount `insighthub` + `aws-load-balancer-controller`. Đọc output core qua `terraform_remote_state` (namespace, tên SA, ARN role IRSA, endpoint/CA cluster) | **Có** — và IP máy chạy phải nằm trong `public_access_cidrs` |
+
+Module (`infra/modules/`): `network` (VPC, subnet public/private, IGW, route
+table, default SG khóa), `eks` (IAM cluster/node, KMS, cluster, node group,
+OIDC provider, access entry), `data` (SG data, RDS + parameter group, Redis,
+random password, Secrets Manager), `ecr`. IRSA role ở root core vì nối
+output của 2 module (`eks` OIDC + `data` secret ARN).
+
+State key core đổi từ `insighthub/day3-terraform/terraform.tfstate` sang
+`insighthub/core/terraform.tfstate` (state cũ rỗng — object cũ 182 byte để
+nguyên, không xóa). Không cần `moved` block vì chưa có resource nào trong
+state. `terraform.tfvars.example` (giá trị giả) có ở `infra/` và
+`infra/platform/`; file `.tfvars` thật bị `.gitignore` chặn.
+
+**Thứ tự apply**: bootstrap → core → platform → Helm (ALB controller, Secrets
+Store CSI Driver + AWS provider, app). **Thứ tự teardown**: Mục 8.
+
+**Quyết định thiết kế của tôi (owner, 2026-09-25)**:
+- **CI dùng GitHub-hosted runner + AWS OIDC** (không self-hosted runner,
+  không access key). EKS endpoint khóa theo `var.admin_cidrs` —
+  `list(string)`, không default, validation từ chối `0.0.0.0/0` và `::/0`
+  (thay cho `operator_cidrs`). Job apply tạm thêm IP runner rồi khôi phục —
+  thiết kế ở Mục 12.
+- **Secret cho pod: Secrets Store CSI Driver + AWS provider (ASCP)** — pod
+  mount secret Secrets Manager qua IRSA của SA `insighthub`, không dùng
+  External Secrets Operator. Cài bằng Helm (chưa viết).
+- Core nhận ARN role `gh_apply` qua biến `ci_apply_role_arn` (không đọc
+  remote state bootstrap — core không phụ thuộc vòng đời bootstrap).
+- Platform chỉ plan/apply trong job apply, sau khi đã tạm thêm IP runner
+  (Mục 12) — `gh_plan` không có access entry EKS.
+- Cài Secrets Store CSI Driver ở bước Helm, không ở Terraform platform.
+
+### Network (Terraform tự tạo — `modules/network`)
 
 | Resource | Ghi chú |
 |---|---|
@@ -51,25 +92,40 @@ Không tạo NAT Gateway: EKS node group vẫn ở subnet public (gán public IP
 ra internet); RDS/Redis chuyển sang subnet private nhưng không cần ra
 internet nên route table private không cần NAT — chi phí thêm $0.
 
-### Compute
+### Compute (`modules/eks`)
 
 | Resource | Ghi chú |
 |---|---|
-| `aws_eks_cluster.lab` | Dùng 2 public subnet ở trên |
+| `aws_eks_cluster.lab` | Dùng 2 public subnet ở trên; `public_access_cidrs = var.admin_cidrs`; `access_config { authentication_mode = "API_AND_CONFIG_MAP", bootstrap_cluster_creator_admin_permissions = false }` |
+| `aws_eks_access_entry.admin[*]` + `aws_eks_access_policy_association.admin[*]` | Cho `var.ci_apply_role_arn` (role `gh_apply`) và từng ARN trong `var.operator_principal_arns` (không hardcode, truyền qua `.tfvars`) — `AmazonEKSClusterAdminPolicy`, scope `cluster` |
 | `aws_eks_node_group.lab` | 1 node, `t3.medium`, subnet gán public IP |
 | `aws_iam_role.eks_cluster` | Role riêng cho EKS control plane |
 | `aws_iam_role.eks_node` | Role riêng cho node group |
 | `aws_iam_openid_connect_provider.eks` | OIDC provider của cluster — bắt buộc cho IRSA (MH6) |
 
-### Database/Cache
+`bootstrap_cluster_creator_admin_permissions = false`: người/role tạo cluster
+không tự có quyền admin ngầm — nếu để `true`, khi `gh_apply` là creator thì
+access entry tự sinh trùng với access entry khai tường minh
+(`ResourceInUseException`). Mọi quyền cluster admin nằm trong code, review
+được. Hệ quả: `operator_principal_arns` bắt buộc có ít nhất 1 ARN (validation),
+nếu không operator mất quyền kubectl sau khi apply local.
+
+### Database/Cache (`modules/data`)
 
 | Resource | Ghi chú |
 |---|---|
-| `aws_db_instance.postgres` | PostgreSQL 16, pgvector, `storage_encrypted = true`, `publicly_accessible = false` |
+| `aws_db_instance.postgres` | PostgreSQL 16, pgvector, `storage_encrypted = true`, `publicly_accessible = false`, `parameter_group_name = aws_db_parameter_group.postgres.name` |
+| `aws_db_parameter_group.postgres` | `name = "insighthub-postgres16"` (cố định, không `name_prefix` — để Conftest đối chiếu được lúc plan), family `postgres16`, **`rds.force_ssl = 1`** — RDS từ chối kết nối không TLS |
 | `aws_elasticache_replication_group.redis` | Redis 7 |
 | `aws_db_subnet_group.lab` | Dùng 2 subnet **private** (MH5) |
 | `aws_elasticache_subnet_group.lab` | Dùng 2 subnet **private** (MH5) |
-| `aws_security_group.data` | Riêng cho RDS/Redis — ingress chỉ cho phép từ security group của EKS node group |
+| `aws_security_group.data` | Riêng cho RDS/Redis — ingress chỉ cho phép từ cluster security group của EKS (output module `eks`, thay cho data source `aws_eks_cluster` cũ) |
+
+⚠️ **TLS bắt buộc với RDS**: app (`api`, `ingestion-worker`) **phải** kết nối
+với `sslmode=require` (hoặc `verify-full` + CA bundle RDS) — kết nối
+plaintext sẽ bị server từ chối. Secret `db-credentials` có thêm field
+`sslmode = "require"`. **Chưa kiểm tra code app** — kiểm ở bước audit app
+(DSN/asyncpg `ssl=` trong `api/app` và `ingestion-worker/worker`).
 
 ### Load Balancing (không phải Terraform quản lý trực tiếp)
 
@@ -89,24 +145,36 @@ phần Helm/kubectl, không nằm trong `.tf`.
 
 | Resource | Ghi chú |
 |---|---|
-| `aws_secretsmanager_secret.db` + `aws_secretsmanager_secret_version.db` | DB credentials; pod đọc qua IRSA, không hardcode |
-| `aws_secretsmanager_secret.redis` + `aws_secretsmanager_secret_version.redis` | Redis auth_token; pod đọc qua IRSA |
+| `aws_secretsmanager_secret.db` + `aws_secretsmanager_secret_version.db` | DB credentials (username/password/host/port/dbname/sslmode); pod mount qua Secrets Store CSI Driver + AWS provider bằng IRSA, không hardcode |
+| `aws_secretsmanager_secret.redis` + `aws_secretsmanager_secret_version.redis` | Redis auth_token; cùng cơ chế CSI |
 
-### Kubernetes — namespace, ServiceAccount, IRSA app (MH3/MH6, §2.3)
+`SecretProviderClass` + cài driver thuộc Helm chart (chưa viết); ARN secret
+lấy từ output core `db_secret_arn`/`redis_secret_arn`.
 
-| Resource | Ghi chú |
-|---|---|
-| `kubernetes_namespace.insighthub_dev` | Tên `insighthub-${var.environment}` (MH3) |
-| `aws_iam_role.insighthub_app` | Trust `system:serviceaccount:insighthub-<env>:insighthub` qua OIDC provider của EKS (không phải OIDC GitHub Actions) |
-| `aws_iam_role_policy.insighthub_app_secrets` | Chỉ `secretsmanager:GetSecretValue` + `DescribeSecret`, đúng 2 ARN secret db/redis — không dùng `*` |
-| `kubernetes_service_account.insighthub` | Namespace `insighthub-<env>`, annotation IRSA trỏ role trên (MH6) |
-| `kubernetes_service_account.alb_controller` | Namespace `kube-system`, thay cho `infra/k8s/alb-controller-sa.yaml` (đã xóa) — annotation lấy động từ `aws_iam_role.alb_controller.arn`, không hardcode |
+### IRSA (root core) + Kubernetes (root platform) — MH3/MH6, §2.3
 
-Provider `kubernetes` dùng `exec` auth (gọi `aws eks get-token` mỗi lần cần,
-không dùng token tĩnh từ data source) để tránh hết hạn token giữa apply dài
-(EKS+node group từng mất >30 phút thực tế) — xem `providers.tf`.
+| Resource | Root | Ghi chú |
+|---|---|---|
+| `aws_iam_role.insighthub_app` | core | Trust `system:serviceaccount:insighthub-<env>:insighthub` qua OIDC provider EKS (không phải OIDC GitHub Actions); namespace/SA lấy từ `local.app_namespace`/`local.app_service_account_name` — nguồn duy nhất |
+| `aws_iam_role_policy.insighthub_app_secrets` | core | Chỉ `secretsmanager:GetSecretValue` + `DescribeSecret`, đúng 2 ARN secret db/redis — không `*` |
+| `aws_iam_role.alb_controller` + `aws_iam_policy.alb_controller` | core | IRSA controller, trust `kube-system:aws-load-balancer-controller` |
+| `kubernetes_namespace.app` | platform | Tên = output core `app_namespace` (`insighthub-dev`) (MH3) |
+| `kubernetes_service_account.insighthub` | platform | Tên/namespace/annotation `eks.amazonaws.com/role-arn` đều từ output core (MH6) |
+| `kubernetes_service_account.alb_controller` | platform | `kube-system`, annotation = output core `alb_controller_role_arn`; Helm chart controller dùng `serviceAccount.create=false` |
 
-### Container Registry (ECR — chuẩn bị cho MH10)
+Output core cho platform/Helm: `aws_region`, `vpc_id`, `eks_cluster_name`,
+`eks_cluster_endpoint`, `eks_cluster_certificate_authority_data`,
+`app_namespace`, `app_service_account_name`, `app_irsa_role_arn`,
+`alb_controller_role_arn`, `alb_controller_namespace`,
+`alb_controller_service_account_name`, `db_secret_arn`, `redis_secret_arn`,
+`ecr_repository_urls`, `rds_endpoint` (sensitive), `redis_endpoint`.
+
+Provider `kubernetes` (chỉ ở platform) dùng `exec` auth (`aws eks get-token`
+mỗi lần cần) thay token tĩnh ~15 phút. **Platform chỉ `validate` được ở
+local khi chưa có cluster** — `plan` cần cluster sống + IP trong
+`public_access_cidrs` (Mục 12).
+
+### Container Registry (ECR — `modules/ecr`, chuẩn bị cho MH10)
 
 | Resource | Ghi chú |
 |---|---|
@@ -122,8 +190,16 @@ key riêng `insighthub/bootstrap/github-oidc.tfstate`.
 | Resource | Ghi chú |
 |---|---|
 | `aws_iam_openid_connect_provider.github_actions` | `lifecycle { prevent_destroy = true }`; thumbprint tính động qua `data.tls_certificate`, không hardcode |
-| `aws_iam_role.gh_plan` | Trust `repo:lamduy2002/insighthub:pull_request`; `ReadOnlyAccess` + đọc 2 secret app + đọc/ghi state (gồm `.tflock`) |
-| `aws_iam_role.gh_apply` | Trust `repo:lamduy2002/insighthub:environment:production`; CRUD scoped theo resource type module chính, có `iam:PassRole` cho 2 role EKS, KHÔNG AdministratorAccess |
+| `aws_iam_role.gh_plan` | Trust `sub = repo:lamduy2002/insighthub:environment:infra-plan`, `aud = sts.amazonaws.com` (`StringEquals`, không wildcard). `ReadOnlyAccess` + đọc 2 secret app + **state 2 key core/platform chỉ `GetObject`** (plan không ghi state) + file `.tflock` Get/Put/Delete (native lock) + `PutObject` chỉ vào `plans/*` kèm condition SSE-KMS đúng key `tfplan` + `kms:GenerateDataKey/Encrypt` |
+| `aws_iam_role.gh_apply` | Trust `sub = repo:lamduy2002/insighthub:environment:production` (GitHub Environment có **required reviewer**), `aud = sts.amazonaws.com`. CRUD scoped theo resource type core; state 2 key Get/Put/Delete; `plans/*` chỉ Get + Delete + `kms:Decrypt`; EKS access entry (cluster + `access-entry/insighthub-lab/*`); `eks:UpdateClusterConfig` + `eks:DescribeUpdate` **chỉ trên ARN `cluster/insighthub-lab`** (tách khỏi statement wildcard); RDS parameter group (`pg:insighthub-*`); ECR push (`GetAuthorizationToken` trên `*` do API, còn lại trên `repository/insighthub/*`); `iam:PassRole` 2 role EKS. KHÔNG AdministratorAccess |
+| `aws_kms_key.tfplan` + `alias/insighthub-tfplan` | CMK mã hóa saved plan; key policy: root account, `gh_plan` encrypt, `gh_apply` decrypt; rotation bật |
+
+**Saved plan**: lưu ở `s3://do2603-lamduy2002-insighthub-tfstate/plans/`
+(prefix riêng, SSE-KMS bằng `tfplan` key). Lý do mã hóa riêng: saved plan
+chứa giá trị nhạy cảm dạng plaintext (`random_password` DB/Redis sau apply,
+biến). **KHÔNG upload plan làm GitHub artifact** — repo public, artifact
+tải được bởi bất kỳ ai. Bucket tạo tay ngoài Terraform nên không thêm bucket
+policy/lifecycle; ép mã hóa bằng condition IAM của `gh_plan`.
 
 Trước khi tạo đã chạy `aws iam list-open-id-connect-providers` xác nhận
 account chưa có provider `token.actions.githubusercontent.com` nào (chỉ có
@@ -280,21 +356,26 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
     `terraform destroy` cluster, đúng thứ tự trong
     `docs/Guide_Local_AWS_Cost_DO2603.md`. Nếu bỏ qua bước này, ALB có thể bị
     bỏ sót và tiếp tục tính phí dù EKS đã bị xóa.
-- **Thứ tự teardown đầy đủ** (bắt buộc theo đúng trình tự, không đảo —
-  provider `kubernetes` phụ thuộc cluster còn sống, xem rủi ro provider ở
-  `providers.tf`; Guide cấm `terraform state rm`/force-remove finalizer để né
-  lỗi dependency):
-  1. `helm uninstall` app (web/api/worker) trong namespace `insighthub-<env>`.
+- **Thứ tự teardown đầy đủ** (bắt buộc đúng trình tự, không đảo; Guide cấm
+  `terraform state rm`/force-remove finalizer để né lỗi dependency). Mọi
+  plan destroy ghi ra `$PLAN_DIR` (`/tmp/insighthub-plans` local,
+  `$RUNNER_TEMP` CI), review rồi apply đúng file plan đó:
+  1. `helm uninstall` app (web/api/worker) trong `insighthub-<env>`, rồi
+     `aws-load-balancer-controller` và Secrets Store CSI Driver/ASCP.
   2. Chờ ALB do Ingress tạo bị xóa hẳn — poll `aws elbv2 describe-load-balancers`
-     tới khi không còn ALB nào gắn tag cluster này (K8s cần vài phút để
-     controller dọn ALB sau khi Ingress bị xóa).
-  3. Xóa record Route53 (nếu đã trỏ domain `do2603.click` cho HTTPS).
-  4. `helm uninstall` External Secrets Operator (nếu đã cài) + `aws-load-balancer-controller`.
-  5. `terraform destroy -target=kubernetes_service_account.insighthub -target=kubernetes_service_account.alb_controller -target=kubernetes_namespace.insighthub_dev` — xóa resource Kubernetes trong khi cluster còn sống (bắt buộc làm trước, xem rủi ro provider ở `providers.tf`).
-  6. `terraform destroy` toàn bộ (EKS, RDS, Redis, VPC, IAM, KMS, ECR, Secrets Manager).
-  7. (Chỉ cuối Day 3, không phải mỗi lượt) gỡ inline policy tự cấp cho `DE000215`
-     (`do2603-lamduy2002-additional-permissions`) — sau khi xác nhận không còn
-     apply/destroy nào cần dùng nữa.
+     tới khi không còn ALB nào gắn tag cluster này (controller cần vài phút).
+  3. Xóa record Route53 (nếu đã trỏ domain cho HTTPS).
+  4. Platform destroy (cluster còn sống, IP trong `public_access_cidrs`):
+     `terraform -chdir=infra/platform plan -destroy -out="$PLAN_DIR/platform-destroy.tfplan"`
+     → review → `terraform -chdir=infra/platform apply "$PLAN_DIR/platform-destroy.tfplan"`.
+  5. Core destroy: `terraform -chdir=infra plan -destroy -out="$PLAN_DIR/core-destroy.tfplan"`
+     → review → apply file đó (EKS, RDS, Redis, VPC, IAM, KMS, ECR, Secrets Manager).
+  6. (Chỉ cuối Day 3, không phải mỗi lượt) gỡ inline policy tự cấp cho `DE000215`
+     (`do2603-lamduy2002-additional-permissions`). Bootstrap không destroy theo lượt.
+
+  Quy trình `terraform destroy -target=kubernetes_*` cũ đã **bỏ** — resource
+  Kubernetes giờ nằm ở root platform riêng nên destroy theo root, không cần
+  `-target`.
 - **CI dùng OIDC AWS**, trust bound repo/ref/environment, không lưu access
   key dài hạn.
 
@@ -304,6 +385,7 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
 - `Running-Project-Specification-Student.md` §7 (Day 3 - AI-Powered IaC & Pipeline).
 - `docs/Guide_Local_AWS_Cost_DO2603.md` (local-first, cost, teardown).
 - `infra/README.md` (phạm vi thư mục infra/ hiện có).
+- Đối chiếu với solution Day 3 của giảng viên sau khi tự thiết kế; các điểm bổ sung sau so sánh (TLS RDS, environment cho plan/apply, lưu saved plan mã hóa) và các điểm cố ý khác (ACM + domain có sẵn thay CloudFront, 2 tầng subnet, fixture LLM) được ghi lý do tại từng mục.
 
 ## 10. Accepted Risks — Checkov Findings
 
@@ -327,7 +409,7 @@ cũng là nội dung trong từng comment `#checkov:skip`):
 | Check ID | Resource | Lý do chấp nhận |
 |---|---|---|
 | CKV_AWS_130 | `aws_subnet.public` | Chỉ còn EKS node group đặt ở subnet public (cần public IP tự ra internet, không NAT Gateway để tiết kiệm chi phí). RDS/Redis đã chuyển sang 2 private subnet riêng (MH5, Mục 2) — không còn public. |
-| CKV_AWS_39 | `aws_eks_cluster.lab` | Đã giảm thiểu bằng `public_access_cidrs = var.operator_cidrs` (bắt buộc CIDR hẹp, có `validation` chặn `0.0.0.0/0`), nhưng không thể tắt hoàn toàn `endpoint_public_access` vì kiến trúc hiện tại không có VPN/bastion để truy cập control plane — cần hạ tầng bổ sung, ngoài phạm vi Day 3. |
+| CKV_AWS_39 | `module.eks.aws_eks_cluster.lab` | Đã giảm thiểu bằng `public_access_cidrs = var.admin_cidrs` (bắt buộc CIDR hẹp, có `validation` chặn `0.0.0.0/0`), nhưng không thể tắt hoàn toàn `endpoint_public_access` vì kiến trúc hiện tại không có VPN/bastion để truy cập control plane — cần hạ tầng bổ sung, ngoài phạm vi Day 3. |
 | CKV_AWS_37 | `aws_eks_cluster.lab` | Bật full control-plane logging phát sinh chi phí CloudWatch Logs liên tục; production-grade observability, không cần cho lab ngắn hạn theo lượt. |
 | CKV_AWS_118 | `aws_db_instance.postgres` | RDS Enhanced Monitoring tăng chi phí, cần thêm IAM role riêng; không cần cho việc kiểm chứng ingestion pipeline trong lượt lab. |
 | CKV_AWS_226 | `aws_db_instance.postgres` | Cố ý pin `engine_version = "16.15"` để đảm bảo reproducibility trong lượt lab; tự động minor-upgrade có thể gây gián đoạn ngoài dự kiến giữa buổi. |
@@ -354,7 +436,7 @@ cũng là nội dung trong từng comment `#checkov:skip`):
 
 | Check ID | Resource | Lý do chấp nhận |
 |---|---|---|
-| CKV_AWS_38 | `aws_eks_cluster.lab` | **Regression so với bản trước** — trước đây `public_access_cidrs` lấy từ `data.http.my_ip` (giá trị cụ thể, checkov resolve được nên PASS); giờ đổi sang `var.operator_cidrs` không default (Acceptance §7.5 đòi plan deterministic) nên checkov không resolve tĩnh được giá trị thật, coi như chưa chắc chắn không phải `0.0.0.0/0` dù đã có `validation` block chặn ở Terraform layer. Checkov không đọc được `validation` block của biến. |
+| CKV_AWS_38 | `module.eks.aws_eks_cluster.lab` | `public_access_cidrs` lấy từ `var.admin_cidrs` (không default, validation từ chối `0.0.0.0/0` và `::/0`) — checkov không resolve tĩnh được giá trị biến và không đọc `validation` block. **Conftest kiểm tra giá trị thật trên plan JSON** (rule deny `public_access_cidrs` chứa `0.0.0.0/0`, Mục 11), nên skip này có lớp kiểm bù. (Lịch sử: trước dùng `data.http.my_ip` — checkov PASS nhưng plan không deterministic.) |
 | CKV_AWS_355 ×2 | `aws_iam_role_policy.gh_apply_network`, `gh_apply_data` (bootstrap) | EC2 (VPC/subnet/IGW/route table/SG) và phần lớn action ElastiCache/KMS không hỗ trợ Resource-level ARN cho `Create*/Delete*/Modify*` trước khi resource tồn tại — bắt buộc `Resource = "*"`, đã giới hạn đúng bộ action cần (không dùng `ec2:*`/`kms:*`). |
 | CKV_AWS_290 ×2 | như trên | Cùng nguyên nhân CKV_AWS_355 — action ghi (Create/Delete/Modify) đi kèm `Resource = "*"` do giới hạn API, không phải thiếu ràng buộc chủ ý. |
 | CKV_AWS_289 | `aws_iam_role_policy.gh_apply_data` (bootstrap) | `kms:PutKeyPolicy`/`kms:CreateGrant` bị coi là "permissions management" — bắt buộc do KMS API yêu cầu `Resource = "*"` cho các action này trước khi key tồn tại, đã giới hạn còn lại ở mức statement riêng theo service. |
@@ -427,7 +509,7 @@ Pipeline CI phải làm **đúng như vậy** (`actions/setup-python` pin 3.11+,
 ở root repo (`venv/`) không ảnh hưởng fingerprint vì root không thuộc
 `SOURCE_ROOTS` và `venv`/`.venv` nằm trong `EXCLUDED_DIRS`.
 
-**Danh sách rule (`main.rego`, 18 rule `deny`)** — resource đang bị xoá
+**Danh sách rule (`main.rego`, 19 rule `deny`)** — resource đang bị xoá
 (`actions == ["delete"]` hoặc `after == null`) được bỏ qua qua `is_active()`:
 
 | Nhóm | Resource | Rule |
@@ -438,6 +520,7 @@ Pipeline CI phải làm **đúng như vậy** (`actions/setup-python` pin 3.11+,
 | Encryption | `aws_elasticache_replication_group` | `transit_encryption_enabled` phải true |
 | Encryption | `aws_ecr_repository` | Phải có `encryption_configuration` |
 | Encryption | `aws_ecr_repository` | `encryption_type` phải là `KMS` |
+| TLS | `aws_db_instance` | `parameter_group_name` phải trỏ tới 1 `aws_db_parameter_group` **có trong plan** với `parameter {name = "rds.force_ssl", value = "1"}` — thiếu PG / PG không có trong plan / giá trị ≠ `"1"` → deny (fail-closed). Kiểm được qua plan vì `name` PG và `parameter_group_name` cố định (biết trước lúc plan); đã xác nhận trên plan core thật 2026-09-25 |
 | Version pin | `aws_db_instance` | `engine_version` bắt đầu bằng `16` |
 | Version pin | `aws_elasticache_replication_group` | `engine_version` bắt đầu bằng `7` |
 | Not public | `aws_db_instance` | `publicly_accessible` không được true |
@@ -466,17 +549,78 @@ thật dù đã bật encryption. Dùng chung 1 helper cho mọi field boolean �
 không phụ thuộc vào kiểu serialize của từng field/phiên bản provider.
 
 **Conftest bù cho CKV_AWS_38**: checkov phải `#checkov:skip=CKV_AWS_38` (Mục
-10) vì `public_access_cidrs = var.operator_cidrs` không có default, checkov
+10) vì `public_access_cidrs = var.admin_cidrs` không có default, checkov
 không resolve tĩnh được và không đọc `validation` block. Rule
-`aws_eks_cluster` ở trên đọc **giá trị thật** trong plan JSON, nên nếu
-`operator_cidrs` vô tình chứa `0.0.0.0/0` (ví dụ `validation` bị sửa/bỏ) thì
+`aws_eks_cluster` ở trên (giữ **deny**, không hạ xuống warn) đọc **giá trị
+thật** trong plan JSON, nên nếu `admin_cidrs` vô tình chứa `0.0.0.0/0` (ví
+dụ `validation` bị sửa/bỏ) thì
 gate vẫn chặn trước apply — skip của checkov không còn là lỗ hổng không ai
 kiểm.
 
 **Kiểm thử**:
-- `conftest verify --policy policy/terraform` — `main_test.rego`, 23 test (pass/deny cho từng rule).
+- `conftest verify --policy policy/terraform` — `main_test.rego`, 27 test (pass/deny cho từng rule; `rds.force_ssl`: allow có PG, deny thiếu `parameter_group_name`, deny PG không có trong plan, deny `value = "0"`).
 - `tests/milestones/day3/test_policy.py` — 2 test bắt buộc của verifier
   (`test_policy_allows_valid`, `test_policy_denies_unsafe`) chạy Conftest qua
   subprocess trên `tests/milestones/day3/fixtures/{valid,invalid}_plan.json`;
-  test deny kiểm cả nội dung message, không chỉ exit code.
-- Plan thật (2026-09-25): `conftest test` → 18 passed, 0 failures.
+  test deny kiểm cả nội dung message (thêm `rds.force_ssl`), không chỉ exit
+  code. Fixture dùng địa chỉ theo module (`module.data.aws_db_instance.postgres`...);
+  `valid_plan.json` có `aws_db_parameter_group` với `rds.force_ssl = "1"`.
+- Plan core thật sau refactor (2026-09-25, `$PLAN_DIR/core.tfplan`, 49 to
+  add): `conftest test` → 19 passed, 0 failures.
+- Rule chạy trên plan **core** (resource AWS). Plan platform chỉ có
+  `kubernetes_*` (không `tags_all`) nên không có rule nào áp dụng.
+
+## 12. CI — plan/apply, saved plan, tạm thêm IP runner (THIẾT KẾ, chưa viết workflow)
+
+Quyết định của tôi: **GitHub-hosted runner + AWS OIDC**. Hệ quả: IP runner
+thay đổi mỗi job và không nằm trong `admin_cidrs` → runner không gọi được
+EKS public endpoint. Core không cần cluster (không có provider kubernetes)
+nên plan/apply core chạy bình thường; chỉ platform + Helm + smoke cần mở
+tạm endpoint cho runner.
+
+**Job plan** (environment `infra-plan`, role `gh_plan`):
+1. `terraform -chdir=infra plan -out="$RUNNER_TEMP/core.tfplan"` → `show -json`
+   → Conftest → Infracost.
+2. Tính `sha256sum core.tfplan`, upload lên
+   `s3://do2603-lamduy2002-insighthub-tfstate/plans/<run_id>/core.tfplan`
+   với `--sse aws:kms --sse-kms-key-id <tfplan key>` (IAM từ chối nếu thiếu).
+   Checksum ghi vào output job (không phải secret). **Không** upload plan làm
+   GitHub artifact.
+
+**Job apply** (environment `production` — required reviewer duyệt trước khi
+job nhận được OIDC token của `gh_apply`):
+1. Tải `plans/<run_id>/core.tfplan`, so `sha256sum` với checksum của job
+   plan → khác thì dừng. `terraform apply core.tfplan` (đúng plan đã duyệt),
+   rồi xóa object plan khỏi S3.
+2. Lấy IP public runner: `RUNNER_IP=$(curl -fsS https://checkip.amazonaws.com)`.
+3. `aws eks update-cluster-config --name insighthub-lab --resources-vpc-config
+   publicAccessCidrs=<admin_cidrs>,$RUNNER_IP/32` → lấy `update.id` →
+   poll `aws eks describe-update` tới `Successful` (fail/timeout → dừng,
+   vẫn chạy bước khôi phục). Quyền: `eks:UpdateClusterConfig` +
+   `eks:DescribeUpdate` chỉ trên ARN cluster lab.
+4. **Platform**: `terraform -chdir=infra/platform plan -out="$RUNNER_TEMP/platform.tfplan"`
+   → `terraform show "$RUNNER_TEMP/platform.tfplan"` **in ra log** →
+   `terraform apply "$RUNNER_TEMP/platform.tfplan"` — apply đúng file plan
+   đó, không bao giờ `apply` không qua plan.
+5. Helm (ALB controller, Secrets Store CSI + ASCP, app) + smoke test.
+6. Bước `if: always()`: `aws eks update-cluster-config` khôi phục **đúng**
+   `admin_cidrs` (lấy từ cùng nguồn biến Terraform, không tự sinh) → poll
+   `describe-update` tới `Successful`. Nếu bước khôi phục fail → job fail
+   rõ ràng (endpoint đang mở thêm 1 IP /32 của runner — xử lý tay ngay).
+7. Fresh `terraform -chdir=infra plan -detailed-exitcode` → phải exit 0
+   (không thay đổi). **Không dùng `ignore_changes`** cho
+   `public_access_cidrs`: nếu bước khôi phục lệch, fresh plan sẽ phát hiện
+   drift thay vì che đi.
+
+**Trade-off có chủ đích — platform không có human review riêng**: platform
+chỉ gồm namespace + 2 ServiceAccount (annotation IRSA lấy từ output core đã
+được review ở plan core). Plan platform được **in trong log** nhưng không
+dừng chờ duyệt riêng trước apply — approval của environment `production`
+(trước bước 1) là lần duyệt duy nhất. Chấp nhận vì phạm vi thay đổi nhỏ,
+xác định hoàn toàn bởi output core; nếu platform mở rộng thêm resource có
+quyền/chi phí thì phải tách job + environment duyệt riêng.
+
+Ràng buộc liên quan: EKS chỉ cho 1 update cluster config chạy tại một thời
+điểm — bước 3/6 phải chờ `Successful` trước khi làm việc khác đụng cluster
+config; job apply dùng `concurrency` group để 2 run không chồng nhau.
+

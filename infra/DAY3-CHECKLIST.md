@@ -15,7 +15,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 |---|---|---|---|
 | MH1 | `infra/` đủ main.tf/variables.tf/outputs.tf/providers.tf | dòng 825 | ✅ xong |
 | MH2 | Backend S3 + `use_lockfile` | dòng 826 | ✅ xong (`infra/backend.tf`) |
-| MH3 | EKS namespace resource | dòng 827 | ✅ code xong — `kubernetes_namespace.insighthub_dev` (`main.tf`), xác nhận qua `terraform plan` (chưa apply) |
+| MH3 | EKS namespace resource | dòng 827 | ✅ code xong — `kubernetes_namespace.app` ở root **platform** (`infra/platform/main.tf`, tên từ output core `app_namespace`), đã `validate`; plan platform cần cluster sống (chưa apply) |
 | MH4 | RDS PostgreSQL 16, encrypted, not public | dòng 828 | ✅ xong (`storage_encrypted=true`, `publicly_accessible=false`) |
 | MH5 | ElastiCache Redis 7, **private subnet** | dòng 829 | ✅ code xong — thêm `aws_subnet.private[*]` (2 AZ, route table riêng không IGW/NAT, chi phí $0), `aws_db_subnet_group`/`aws_elasticache_subnet_group` đã chuyển sang subnet này. EKS cluster/node group giữ nguyên public. Chưa apply. |
 | MH6 | IRSA: ServiceAccount + IAM Role binding | dòng 830, verify bằng `kubectl describe sa insighthub` | ✅ code xong — `kubernetes_service_account.insighthub` + `aws_iam_role.insighthub_app` (trust `system:serviceaccount:insighthub-dev:insighthub`, chỉ `secretsmanager:GetSecretValue`+`DescribeSecret` đúng 2 ARN secret). Chưa apply nên chưa `kubectl describe` được thật. |
@@ -64,7 +64,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 
 | Thành phần | Trạng thái |
 |---|---|
-| EKS namespace `insighthub-<env>` | ✅ code xong (`kubernetes_namespace.insighthub_dev`), chưa apply |
+| EKS namespace `insighthub-<env>` | ✅ code xong (`infra/platform/` — `kubernetes_namespace.app`), chưa apply |
 | Deployment `web` + Service | ❌ chưa làm (Helm chart) |
 | Deployment `api` + Service + **HPA** + **Ingress (TLS)** | ❌ chưa làm — HPA cần `metrics-server` cài trước (xem mục L) |
 | Deployment `ingestion-worker` | ❌ chưa làm (Helm chart) |
@@ -137,7 +137,7 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 1. **Tag owner**: dùng **`owner`** (chữ thường) trong `common_tags`, **bỏ** `Owner` (viết hoa). Lý do: IAM (và hầu hết AWS service) coi tag key case-insensitive, nên `owner` (chữ thường) **đáp ứng đồng thời cả 2 tài liệu** — §7.3 đòi đúng literal `owner`, còn Guide đòi `Owner` nhưng do case-insensitive nên cùng một key vật lý trên AWS. Tránh được bug "Duplicate tag keys" đã gặp trước đây (không được có cả 2 case cùng lúc). ✅ Đã áp dụng.
 2. **Vị trí Rego + lệnh Conftest**: đặt tại **`infra/policy/terraform/`**, chạy `conftest` từ thư mục `infra/` — khi đó lệnh đúng y hệt §7.5 (`conftest test --policy policy/terraform tfplan.json`, chạy relative từ `infra/`), đồng thời vẫn nằm trong `infra/` theo tinh thần §2.5 (`infra/policies` — khác tên số ít/nhiều nhưng cùng ý định đặt policy trong `infra/`). ⚠️ Đã quyết định, **chưa viết file Rego**.
 3. **Module bootstrap GitHub OIDC tách riêng**: `infra/bootstrap/github-oidc/`, backend S3 cùng bucket khác key (`insighthub/bootstrap/github-oidc.tfstate`), `lifecycle { prevent_destroy = true }` trên OIDC provider — không destroy theo lượt lab vì là resource cấp account dùng chung cả lớp. ✅ Đã viết code + `terraform plan` sạch (10 to add), **chưa apply** (apply ở giai đoạn viết pipeline thật).
-4. **Bỏ `data.http.my_ip`, dùng `var.operator_cidrs` bắt buộc**: để `terraform plan` deterministic giữa local và CI (Acceptance §7.5) — trước đây plan **không** deterministic dù checklist từng đánh dấu ✅ nhầm (xem mục C). Thêm `validation` block chặn `0.0.0.0/0`/`::/0` (phòng thủ thêm, dù checkov không đọc được validation block — xem SPEC.md mục 10, finding CKV_AWS_38 mới). ✅ Đã áp dụng.
+4. **Bỏ `data.http.my_ip`, dùng `var.operator_cidrs` bắt buộc**: để `terraform plan` deterministic giữa local và CI (Acceptance §7.5) — trước đây plan **không** deterministic dù checklist từng đánh dấu ✅ nhầm (xem mục C). Thêm `validation` block chặn `0.0.0.0/0`/`::/0` (phòng thủ thêm, dù checkov không đọc được validation block — xem SPEC.md mục 10, finding CKV_AWS_38 mới). ✅ Đã áp dụng. **Cập nhật 2026-09-25**: đổi tên thành `var.admin_cidrs` (cùng validation, thêm kiểm CIDR hợp lệ + không rỗng) — xem mục O / SPEC.md Mục 2, 12.
 5. **Provider kubernetes dùng `exec` auth**: thay `data.aws_eks_cluster_auth.lab.token` (tĩnh, hết hạn ~15 phút) bằng `exec { command = "aws", args = ["eks", "get-token", ...] }` — tránh lỗi token hết hạn giữa apply dài (EKS+node group từng mất >30 phút thực tế). Rủi ro B (cluster đã bị xóa khi plan/destroy) **không có cách Terraform tự giải quyết** — xử lý bằng quy trình teardown 7 bước bắt buộc (SPEC.md mục 8), không phải code. ✅ Đã áp dụng.
 
 ## K. Thứ tự đóng băng source (source freeze) — bắt buộc để `ci_binding`/`verification-source` khớp
@@ -162,11 +162,11 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
   ```
   → `infra/.terraform/` (và `infra/bootstrap/github-oidc/.terraform/`) **bị loại** ✅ (so khớp theo tên thư mục ở mọi cấp). `venv/` **bị loại** ✅ (thực tế `venv/` ở root cũng không thuộc `SOURCE_ROOTS`). `.terraform.lock.hcl` **không** bị loại — đúng, vì file này được commit.
 - **Không** bị loại: `tfplan`, `tfplan.json`, `teardown.tfplan`, `lab.tfplan`, `*.tfstate*` → nếu nằm trong `infra/` ở local (không có trên runner) thì `source_sha256` local ≠ CI. Đã đo: 3 file plan (`infra/tfplan`, `infra/teardown.tfplan`, `infra/bootstrap/github-oidc/tfplan`) → `6e7de32b…`; chuyển sang `/tmp/insighthub-plans/` → `0456ae13…`. `find infra -name "*tfplan*"` giờ rỗng.
-- **Quy tắc**: mọi `terraform plan -out`, `terraform show -json`, `terraform plan -destroy -out` đều ghi ra ngoài repo — `/tmp/insighthub-plans/` ở local, `$RUNNER_TEMP` ở CI (lệnh mẫu: `infra/SPEC.md` Mục 11). Trước bước 2 và bước 5: chạy `find infra -name "*tfplan*" -o -name "*.tfstate*"` phải rỗng.
+- **Quy tắc**: mọi `terraform plan -out`, `terraform show -json`, `terraform plan -destroy -out` đều ghi ra ngoài repo — `/tmp/insighthub-plans/` ở local, `$RUNNER_TEMP` ở CI (lệnh mẫu: `infra/SPEC.md` Mục 11). Trước bước 2 và bước 5: chạy `find infra -path '*/.terraform' -prune -o \( -name "*tfplan*" -o -name "*.tfstate*" \) -print` phải rỗng. Loại `.terraform/` vì `terraform init` luôn tạo `.terraform/terraform.tfstate` — đó là cache cấu hình backend, không phải state hạ tầng; thư mục này vừa gitignore vừa nằm trong `EXCLUDED_DIRS` nên không ảnh hưởng fingerprint.
 
 **Ràng buộc bổ sung — môi trường verifier**: `scripts/verify.py` cần **Python 3.11+**, và chạy pytest bằng `sys.executable` → phải gọi bằng Python của venv đã cài `python -m pip install --require-hashes -r scripts/requirements-verification.txt` (`GETTING_STARTED.md` mục "Milestone verifier dependencies"). `/usr/bin/python3` (3.10, không pytest) → INCOMPLETE ngay ở `run_tests`. Pipeline CI phải làm đúng như vậy: `setup-python` 3.11+, venv, `pip install --require-hashes`, rồi chạy verifier bằng Python của venv.
 
-**Ràng buộc bổ sung cho bước 2 — thời điểm chạy CI lần cuối**: phải chạy khi **state của module chính (`infra/`) đang rỗng** (sau teardown, chưa apply lại). Lý do: provider `kubernetes` dùng `exec` auth gọi `aws eks get-token` (mục J.5) — nếu `iac.yml` có job nào chạm tới provider này (kể cả chỉ `terraform plan`/`validate` với backend thật, không chỉ riêng `apply`), job đó cần **endpoint EKS cluster khả truy cập từ GitHub-hosted runner**, nhưng `public_access_cidrs = var.operator_cidrs` (mục J.4) chỉ whitelist đúng IP operator — **runner GitHub Actions luôn bị chặn** (IP khác, không nằm trong `operator_cidrs`). Do đó: chạy CI lần cuối cho `verification-source` khi cluster **chưa tồn tại** (state rỗng) để tránh job liên quan tới cluster bị timeout/lỗi kết nối; job đó chỉ nên chạy `fmt/validate/tflint/checkov/plan` (không cần cluster sống) — apply thật vẫn làm thủ công tại local như các lượt trước.
+**Ràng buộc bổ sung cho bước 2 — thời điểm chạy CI lần cuối** (cập nhật 2026-09-25 sau khi tách core/platform): core **không còn provider `kubernetes`** nên plan/apply core chạy được trên GitHub-hosted runner dù cluster đang sống hay chưa. Chỉ root platform + Helm cần endpoint EKS — job apply tạm thêm IP runner vào `public_access_cidrs` rồi khôi phục đúng `admin_cidrs` (`if: always()`), sau đó fresh plan core phải không có thay đổi (SPEC.md Mục 12). Ràng buộc "state phải rỗng" của bản cũ không còn cần; nhưng lần chạy CI cuối cho `verification-source` vẫn phải chạy **sau** khi mọi source đã đóng băng (bước 1-2).
 
 ## L. Chuẩn bị trước khi deploy (bổ sung — không có mục riêng trong spec nhưng cần cho MH10/§2.3)
 
@@ -179,3 +179,23 @@ Toàn bộ thay đổi ở `infra/main.tf`, `infra/variables.tf`, `infra/provide
 **Lượt tiếp theo cùng ngày**: sửa `copy_tags_to_snapshot`/`encryption_configuration` (đóng CKV2_AWS_60 + CKV_AWS_136×3 bằng code), chuyển 24 finding còn lại thành `#checkov:skip` tại resource → **`checkov -d infra/`: 157 passed, 0 failed, 24 skipped, exit 0**. `tflint`/`validate` vẫn sạch.
 
 Chưa làm trong lượt này (nằm ngoài phạm vi "chỉ Terraform"): file Rego (`infra/policy/terraform/`), `tests/milestones/day3/test_*.py`, `.github/workflows/iac.yml`, Helm chart, `ai-prompts/day3.md`, `lab-manifest.json` lập trước (vẫn còn nợ từ lượt trước).
+
+## O. Bổ sung thiết kế (2026-09-25 — refactor core/platform, chưa apply)
+
+| # | Hạng mục | Trạng thái |
+|---|---|---|
+| O.1 | Tách **core** (`infra/`, key `insighthub/core/terraform.tfstate`) / **platform** (`infra/platform/`, key `insighthub/platform/terraform.tfstate`, đọc core qua `terraform_remote_state`) / bootstrap (giữ vị trí). Core không còn provider kubernetes. Thứ tự apply bootstrap → core → platform → Helm; teardown Helm → chờ ALB xóa → Route53 → platform destroy → core destroy (SPEC Mục 8) | ✅ code xong; core plan thật 49 to add; platform chỉ validate (plan cần cluster sống) |
+| O.2 | Modules `infra/modules/{network,eks,data,ecr}` | ✅ code xong |
+| O.3 | `terraform.tfvars.example` cho core và platform (giá trị giả) | ✅ |
+| O.4 | EKS `API_AND_CONFIG_MAP` + access entry cho `gh_apply` và `operator_principal_arns`, `bootstrap_cluster_creator_admin_permissions = false`; `admin_cidrs` thay `operator_cidrs` | ✅ code xong |
+| O.5 | RDS `aws_db_parameter_group` `rds.force_ssl = 1` + Conftest rule kiểm trên plan | ✅ code + rule; ❌ **audit app `sslmode=require`** chưa làm |
+| O.6 | Bootstrap: environment `infra-plan`/`production`, state `gh_plan` chỉ đọc (lock Get/Put/Delete), KMS key + `plans/` cho saved plan, quyền `gh_apply` (access entry, UpdateClusterConfig/DescribeUpdate chỉ cluster lab, ECR push, parameter group) | ✅ code xong, chưa apply; ❌ tạo 2 GitHub Environment + required reviewer trên repo |
+| O.7 | Pin mọi GitHub Action theo **commit SHA** (không tag) + **checksum** cho tool tải về (terraform, tflint, checkov, conftest 0.70.x, infracost, helm, kubectl) | ❌ chưa viết workflow |
+| O.8 | Apply bằng **saved plan** + so **checksum** sau environment approval (plan job → S3 `plans/` SSE-KMS → apply job tải, so sha256, apply, xóa) — không upload plan làm artifact | ⚠️ thiết kế (SPEC Mục 12), chưa viết workflow |
+| O.9 | Pipeline có: app tests, image build (push ECR bằng `gh_apply`), **source binding** (`source-manifest.json` + chart archive **deterministic** làm `deployment` artifact), Infracost PR comment, AI giải thích plan **đã sanitize** (bỏ giá trị sensitive/ARN account trước khi gửi) | ❌ |
+| O.10 | PR từ fork **không có cloud identity** (không environment, không `id-token: write`, không secret) — chỉ chạy fmt/validate/lint/checkov/conftest trên fixture | ❌ chưa viết workflow (trust `gh_plan` đã chặn bằng `sub` environment) |
+| O.11 | Tạm thêm IP runner vào `public_access_cidrs` trong job apply rồi khôi phục (`if: always()`), không `ignore_changes`; platform plan -out → in log → apply đúng file (trade-off: không human review riêng cho platform) | ⚠️ thiết kế (SPEC Mục 12) |
+| O.12 | Helm chart: probes, resources, securityContext, HPA, Ingress (ACM + domain có sẵn), Secrets Store CSI (`SecretProviderClass`), migration Job; values `local`/`dev` — local chạy Postgres/Redis **trong cluster**, AWS dùng RDS/ElastiCache (**không StatefulSet** trên AWS) | ❌ |
+| O.13 | Test local bằng **kind riêng** (không dùng cluster lab chung) + kiểm UI trên trình duyệt | ❌ |
+| O.14 | Evidence: image digest, test **allow/deny quyền** (IRSA đọc được 2 secret, bị từ chối secret khác; gh_plan không ghi được state), tag inventory, **fresh plan sau apply không thay đổi**, runbook, requirement matrix, PR description | ❌ |
+
