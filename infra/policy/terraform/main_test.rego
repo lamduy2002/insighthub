@@ -27,7 +27,17 @@ valid_rds_after := {
 	"instance_class": "db.t3.micro",
 	"engine_version": "16.15",
 	"multi_az": false,
+	"parameter_group_name": "insighthub-postgres16",
 }
+
+valid_pg_after := {
+	"tags_all": full_tags,
+	"name": "insighthub-postgres16",
+	"family": "postgres16",
+	"parameter": [{"name": "rds.force_ssl", "value": "1", "apply_method": "immediate"}],
+}
+
+pg_rc := mk("module.data.aws_db_parameter_group.postgres", "aws_db_parameter_group", valid_pg_after)
 
 valid_redis_after := {
 	"tags_all": full_tags,
@@ -67,6 +77,7 @@ valid_vpc_after := {"tags_all": full_tags}
 valid_input := {"resource_changes": [
 	mk("aws_vpc.lab", "aws_vpc", valid_vpc_after),
 	mk("aws_db_instance.postgres", "aws_db_instance", valid_rds_after),
+	pg_rc,
 	mk("aws_elasticache_replication_group.redis", "aws_elasticache_replication_group", valid_redis_after),
 	mk("aws_ecr_repository.app[\"api\"]", "aws_ecr_repository", valid_ecr_after),
 	mk("aws_eks_cluster.lab", "aws_eks_cluster", valid_eks_cluster_after),
@@ -188,6 +199,34 @@ test_deny_eks_public_access_cidrs_open if {
 	after := object.union(valid_eks_cluster_after, {"vpc_config": [{"public_access_cidrs": ["0.0.0.0/0"]}]})
 	some msg in deny with input as {"resource_changes": [mk("aws_eks_cluster.lab", "aws_eks_cluster", after)]}
 	contains(msg, "public_access_cidrs")
+}
+
+# ---- rds.force_ssl ----
+test_allow_rds_with_force_ssl_parameter_group if {
+	count(deny) == 0 with input as {"resource_changes": [
+		mk("aws_db_instance.postgres", "aws_db_instance", valid_rds_after),
+		pg_rc,
+	]}
+}
+
+test_deny_rds_without_parameter_group if {
+	after := object.remove(valid_rds_after, ["parameter_group_name"])
+	some msg in deny with input as {"resource_changes": [mk("aws_db_instance.postgres", "aws_db_instance", after), pg_rc]}
+	contains(msg, "rds.force_ssl")
+}
+
+test_deny_rds_parameter_group_not_in_plan if {
+	some msg in deny with input as {"resource_changes": [mk("aws_db_instance.postgres", "aws_db_instance", valid_rds_after)]}
+	contains(msg, "rds.force_ssl")
+}
+
+test_deny_rds_force_ssl_zero if {
+	pg_after := object.union(valid_pg_after, {"parameter": [{"name": "rds.force_ssl", "value": "0", "apply_method": "immediate"}]})
+	some msg in deny with input as {"resource_changes": [
+		mk("aws_db_instance.postgres", "aws_db_instance", valid_rds_after),
+		mk("module.data.aws_db_parameter_group.postgres", "aws_db_parameter_group", pg_after),
+	]}
+	contains(msg, "rds.force_ssl")
 }
 
 # ---- Cost guardrail ----

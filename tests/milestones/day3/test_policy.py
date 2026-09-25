@@ -46,6 +46,7 @@ def test_policy_denies_unsafe():
         "owner",
         "transit_encryption_enabled",
         "instance_class",
+        "rds.force_ssl",
     ]
     missing = [s for s in expected_substrings if s not in output]
     assert not missing, (

@@ -94,6 +94,30 @@ deny contains msg if {
 	msg := sprintf("%s: encryption_type phai la KMS", [rc.address])
 }
 
+# TLS bắt buộc phía server: mỗi aws_db_instance phải gắn parameter group
+# (có trong plan) đặt rds.force_ssl = "1". Kiểm được qua plan vì
+# parameter_group_name và name của aws_db_parameter_group đều cố định
+# (không name_prefix) nên đã biết lúc plan. Thiếu parameter group, tên
+# không khớp, hoặc giá trị khác "1" → deny (fail-closed). SPEC.md Mục 11.
+force_ssl_parameter_group(name) if {
+	some pg in input.resource_changes
+	pg.type == "aws_db_parameter_group"
+	is_active(pg)
+	pg.change.after.name == name
+	some p in object.get(pg.change.after, "parameter", [])
+	p.name == "rds.force_ssl"
+	p.value == "1"
+}
+
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_db_instance"
+	is_active(rc)
+	pg_name := object.get(rc.change.after, "parameter_group_name", "")
+	not force_ssl_parameter_group(pg_name)
+	msg := sprintf("%s: parameter_group_name '%s' phai tro toi aws_db_parameter_group co rds.force_ssl = 1 (bat buoc TLS)", [rc.address, pg_name])
+}
+
 # ============================================================
 # Engine version pin
 # ============================================================
@@ -154,8 +178,8 @@ deny contains msg if {
 }
 
 # Bu cho CKV_AWS_38 (checkov phai #checkov:skip vi khong resolve tinh duoc
-# var.operator_cidrs) — Conftest doc gia tri THAT trong plan JSON nen bat
-# duoc neu operator_cidrs vo tinh chua 0.0.0.0/0 luc apply that.
+# var.admin_cidrs) — Conftest doc gia tri THAT trong plan JSON nen bat duoc
+# neu admin_cidrs vo tinh chua 0.0.0.0/0 (vd validation bi sua/bo).
 deny contains msg if {
 	some rc in input.resource_changes
 	rc.type == "aws_eks_cluster"

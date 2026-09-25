@@ -3,12 +3,14 @@
   "terraform_version": "1.10.0",
   "resource_changes": [
     {
-      "address": "aws_vpc.lab",
+      "address": "module.network.aws_vpc.lab",
       "mode": "managed",
       "type": "aws_vpc",
       "name": "lab",
       "change": {
-        "actions": ["create"],
+        "actions": [
+          "create"
+        ],
         "after": {
           "cidr_block": "10.20.0.0/16",
           "tags_all": {
@@ -19,15 +21,18 @@
             "ExpiresAt": "2026-09-24T23:59:00+07:00"
           }
         }
-      }
+      },
+      "module_address": "module.network"
     },
     {
-      "address": "aws_db_instance.postgres",
+      "address": "module.data.aws_db_instance.postgres",
       "mode": "managed",
       "type": "aws_db_instance",
       "name": "postgres",
       "change": {
-        "actions": ["create"],
+        "actions": [
+          "create"
+        ],
         "after": {
           "identifier": "insighthub-postgres",
           "engine": "postgres",
@@ -45,15 +50,18 @@
             "ExpiresAt": "2026-09-24T23:59:00+07:00"
           }
         }
-      }
+      },
+      "module_address": "module.data"
     },
     {
-      "address": "aws_elasticache_replication_group.redis",
+      "address": "module.data.aws_elasticache_replication_group.redis",
       "mode": "managed",
       "type": "aws_elasticache_replication_group",
       "name": "redis",
       "change": {
-        "actions": ["create"],
+        "actions": [
+          "create"
+        ],
         "after": {
           "engine": "redis",
           "engine_version": "7.1",
@@ -69,43 +77,23 @@
             "ExpiresAt": "2026-09-24T23:59:00+07:00"
           }
         }
-      }
+      },
+      "module_address": "module.data"
     },
     {
-      "address": "aws_ecr_repository.app[\"api\"]",
+      "address": "module.ecr.aws_ecr_repository.app[\"api\"]",
       "mode": "managed",
       "type": "aws_ecr_repository",
       "name": "app",
       "change": {
-        "actions": ["create"],
+        "actions": [
+          "create"
+        ],
         "after": {
           "name": "insighthub/api",
-          "encryption_configuration": [{"encryption_type": "KMS"}],
-          "tags_all": {
-            "project": "insighthub",
-            "environment": "dev",
-            "owner": "lamduy2002",
-            "cost_center": "DO2603",
-            "managed_by": "terraform",
-            "ExpiresAt": "2026-09-24T23:59:00+07:00"
-          }
-        }
-      }
-    },
-    {
-      "address": "aws_eks_cluster.lab",
-      "mode": "managed",
-      "type": "aws_eks_cluster",
-      "name": "lab",
-      "change": {
-        "actions": ["create"],
-        "after": {
-          "name": "insighthub-lab",
-          "vpc_config": [
+          "encryption_configuration": [
             {
-              "endpoint_public_access": true,
-              "endpoint_private_access": true,
-              "public_access_cidrs": ["203.0.113.10/32"]
+              "encryption_type": "KMS"
             }
           ],
           "tags_all": {
@@ -117,41 +105,28 @@
             "ExpiresAt": "2026-09-24T23:59:00+07:00"
           }
         }
-      }
+      },
+      "module_address": "module.ecr"
     },
     {
-      "address": "aws_eks_node_group.lab",
+      "address": "module.eks.aws_eks_cluster.lab",
       "mode": "managed",
-      "type": "aws_eks_node_group",
+      "type": "aws_eks_cluster",
       "name": "lab",
       "change": {
-        "actions": ["create"],
+        "actions": [
+          "create"
+        ],
         "after": {
-          "node_group_name": "insighthub-node-group",
-          "instance_types": ["t3.medium"],
-          "tags_all": {
-            "project": "insighthub",
-            "environment": "dev",
-            "owner": "lamduy2002",
-            "cost_center": "DO2603",
-            "managed_by": "terraform",
-            "ExpiresAt": "2026-09-24T23:59:00+07:00"
-          }
-        }
-      }
-    },
-    {
-      "address": "aws_security_group.data",
-      "mode": "managed",
-      "type": "aws_security_group",
-      "name": "data",
-      "change": {
-        "actions": ["create"],
-        "after": {
-          "name": "insighthub-data-sg",
-          "ingress": [
-            {"from_port": 5432, "to_port": 5432, "protocol": "tcp", "cidr_blocks": [], "ipv6_cidr_blocks": [], "security_groups": ["sg-eks-example"]},
-            {"from_port": 6379, "to_port": 6379, "protocol": "tcp", "cidr_blocks": [], "ipv6_cidr_blocks": [], "security_groups": ["sg-eks-example"]}
+          "name": "insighthub-lab",
+          "vpc_config": [
+            {
+              "endpoint_public_access": true,
+              "endpoint_private_access": true,
+              "public_access_cidrs": [
+                "203.0.113.10/32"
+              ]
+            }
           ],
           "tags_all": {
             "project": "insighthub",
@@ -162,19 +137,94 @@
             "ExpiresAt": "2026-09-24T23:59:00+07:00"
           }
         }
-      }
+      },
+      "module_address": "module.eks"
     },
     {
-      "address": "aws_iam_role_policy_attachment.eks_cluster_policy",
+      "address": "module.eks.aws_eks_node_group.lab",
+      "mode": "managed",
+      "type": "aws_eks_node_group",
+      "name": "lab",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "node_group_name": "insighthub-node-group",
+          "instance_types": [
+            "t3.medium"
+          ],
+          "tags_all": {
+            "project": "insighthub",
+            "environment": "dev",
+            "owner": "lamduy2002",
+            "cost_center": "DO2603",
+            "managed_by": "terraform",
+            "ExpiresAt": "2026-09-24T23:59:00+07:00"
+          }
+        }
+      },
+      "module_address": "module.eks"
+    },
+    {
+      "address": "module.data.aws_security_group.data",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "data",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "name": "insighthub-data-sg",
+          "ingress": [
+            {
+              "from_port": 5432,
+              "to_port": 5432,
+              "protocol": "tcp",
+              "cidr_blocks": [],
+              "ipv6_cidr_blocks": [],
+              "security_groups": [
+                "sg-eks-example"
+              ]
+            },
+            {
+              "from_port": 6379,
+              "to_port": 6379,
+              "protocol": "tcp",
+              "cidr_blocks": [],
+              "ipv6_cidr_blocks": [],
+              "security_groups": [
+                "sg-eks-example"
+              ]
+            }
+          ],
+          "tags_all": {
+            "project": "insighthub",
+            "environment": "dev",
+            "owner": "lamduy2002",
+            "cost_center": "DO2603",
+            "managed_by": "terraform",
+            "ExpiresAt": "2026-09-24T23:59:00+07:00"
+          }
+        }
+      },
+      "module_address": "module.data"
+    },
+    {
+      "address": "module.eks.aws_iam_role_policy_attachment.eks_cluster_policy",
       "mode": "managed",
       "type": "aws_iam_role_policy_attachment",
       "name": "eks_cluster_policy",
       "change": {
-        "actions": ["create"],
+        "actions": [
+          "create"
+        ],
         "after": {
           "policy_arn": "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
         }
-      }
+      },
+      "module_address": "module.eks"
     }
   ]
 }
