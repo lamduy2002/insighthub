@@ -207,7 +207,7 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
 - [ ] `tflint --recursive` → 0 errors, 0 warnings
 - [ ] `checkov -d infra/` → no HIGH
 - [ ] `terraform plan -out=tfplan` → deterministic
-- [ ] `conftest test --policy policy/terraform tfplan.json` → pass
+- [x] `conftest test --policy policy/terraform tfplan.json` → pass (local 2026-09-25, xem Mục 11)
 - [ ] `infracost breakdown --path infra/` → dự toán theo region, thời gian lab và phụ phí
 - [ ] `gh run list --workflow=iac.yml` → ✓ success
 - [ ] `kubectl get ns insighthub-dev` → exists
@@ -365,3 +365,86 @@ dứt điểm, hướng khả thi là thêm VPN (Client VPN endpoint hoặc Site
 hoặc bastion host trong public subnet, rồi tắt hẳn `endpoint_public_access`
 — đây là thay đổi kiến trúc lớn hơn phạm vi policy-gate hiện tại, cần quyết
 định riêng nếu muốn triển khai.
+
+## 11. Policy-as-code — Conftest (`infra/policy/terraform/`)
+
+Policy gate chạy trên **plan JSON thật** (`terraform show -json tfplan`), bổ
+sung cho checkov (checkov đọc HCL tĩnh, Conftest đọc giá trị đã resolve).
+
+**Phiên bản & cú pháp**: pin **Conftest 0.70.x** (đã kiểm với 0.70.1 / OPA
+1.20.2). Rego viết theo cú pháp v1 (`import rego.v1`, `deny contains msg if
+{...}`) — Conftest/OPA cũ (< 1.0) không parse được. **Pipeline CI (`iac.yml`)
+phải cài đúng Conftest 0.70.x** (tải binary release theo version cố định,
+không dùng `latest`), và runner phải có `conftest` trong `PATH` trước bước
+`pytest tests/milestones/day3` (test gọi `shutil.which("conftest")`, thiếu
+binary → test FAIL, không skip).
+
+**Lệnh** (chạy từ `infra/`):
+
+```bash
+terraform plan -out=tfplan
+terraform show -json tfplan > "$RUNNER_TEMP/tfplan.json"   # KHÔNG ghi vào infra/
+conftest test --policy policy/terraform "$RUNNER_TEMP/tfplan.json"
+conftest verify --policy policy/terraform                   # unit test Rego (main_test.rego)
+```
+
+⚠️ `tfplan.json` **không được nằm trong `infra/`** khi chạy checkov:
+`scripts/verify.py` copy nguyên `infra/` rồi chạy `checkov -d .`, checkov sẽ
+quét cả plan JSON — nơi không có inline `#checkov:skip` — và fail lại các
+accepted risk ở Mục 10 (đã gặp thật 2026-09-25: CKV2_AWS_57, CKV2_AWS_50...).
+`.gitignore` đã chặn `infra/**/tfplan.json` nhưng file vẫn tồn tại trên đĩa
+local/runner, nên phải ghi ra ngoài `infra/`.
+
+**Danh sách rule (`main.rego`, 18 rule `deny`)** — resource đang bị xoá
+(`actions == ["delete"]` hoặc `after == null`) được bỏ qua qua `is_active()`:
+
+| Nhóm | Resource | Rule |
+|---|---|---|
+| Tags | mọi resource có `tags_all` | Đủ và không rỗng: `project`, `environment`, `owner`, `cost_center`, `managed_by`, `ExpiresAt` |
+| Encryption | `aws_db_instance` | `storage_encrypted` phải true |
+| Encryption | `aws_elasticache_replication_group` | `at_rest_encryption_enabled` phải true |
+| Encryption | `aws_elasticache_replication_group` | `transit_encryption_enabled` phải true |
+| Encryption | `aws_ecr_repository` | Phải có `encryption_configuration` |
+| Encryption | `aws_ecr_repository` | `encryption_type` phải là `KMS` |
+| Version pin | `aws_db_instance` | `engine_version` bắt đầu bằng `16` |
+| Version pin | `aws_elasticache_replication_group` | `engine_version` bắt đầu bằng `7` |
+| Not public | `aws_db_instance` | `publicly_accessible` không được true |
+| Not public | `aws_security_group` | Ingress `0.0.0.0/0` không được phủ port 5432/6379 |
+| Not public | `aws_security_group` | Ingress `::/0` không được phủ port 5432/6379 |
+| Not public | `aws_eks_cluster` | `vpc_config[0].public_access_cidrs` không chứa `0.0.0.0/0` |
+| Cost | `aws_eks_node_group` | `instance_types` ⊆ {`t3.medium`} |
+| Cost | `aws_db_instance` | `instance_class` ∈ {`db.t3.micro`} |
+| Cost | `aws_elasticache_replication_group` | `node_type` ∈ {`cache.t3.micro`} |
+| Cost | `aws_nat_gateway` | Cấm tạo mới |
+| Cost | `aws_db_instance` | `multi_az` không được true |
+| IAM | `aws_iam_role_policy_attachment` | Cấm `policy_arn` kết thúc bằng `/AdministratorAccess` |
+
+Rule encryption dùng `not is_true(v)` với mặc định `null` → **thiếu field
+cũng bị tính là vi phạm** (fail-closed). Rule "not public"/`multi_az` dùng
+`is_true(v)` với mặc định `false` → chỉ deny khi giá trị bật rõ ràng.
+
+**Helper `is_true(v)`** — chấp nhận cả boolean `true` **và** chuỗi `"true"`.
+Lý do: hashicorp/aws 5.x (pin 5.100.0) serialize
+`aws_elasticache_replication_group.at_rest_encryption_enabled` dưới dạng
+**string** `"true"`/`"false"` trong `resource_changes[].change.after` (schema
+`TypeString` vì lý do lịch sử của provider), trong khi
+`transit_encryption_enabled`/`storage_encrypted`/`publicly_accessible`/`multi_az`
+là boolean. So sánh thẳng `v == true` sẽ **false-positive** deny trên plan
+thật dù đã bật encryption. Dùng chung 1 helper cho mọi field boolean để rule
+không phụ thuộc vào kiểu serialize của từng field/phiên bản provider.
+
+**Conftest bù cho CKV_AWS_38**: checkov phải `#checkov:skip=CKV_AWS_38` (Mục
+10) vì `public_access_cidrs = var.operator_cidrs` không có default, checkov
+không resolve tĩnh được và không đọc `validation` block. Rule
+`aws_eks_cluster` ở trên đọc **giá trị thật** trong plan JSON, nên nếu
+`operator_cidrs` vô tình chứa `0.0.0.0/0` (ví dụ `validation` bị sửa/bỏ) thì
+gate vẫn chặn trước apply — skip của checkov không còn là lỗ hổng không ai
+kiểm.
+
+**Kiểm thử**:
+- `conftest verify --policy policy/terraform` — `main_test.rego`, 23 test (pass/deny cho từng rule).
+- `tests/milestones/day3/test_policy.py` — 2 test bắt buộc của verifier
+  (`test_policy_allows_valid`, `test_policy_denies_unsafe`) chạy Conftest qua
+  subprocess trên `tests/milestones/day3/fixtures/{valid,invalid}_plan.json`;
+  test deny kiểm cả nội dung message, không chỉ exit code.
+- Plan thật (2026-09-25): `conftest test` → 18 passed, 0 failures.

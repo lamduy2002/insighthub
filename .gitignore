@@ -30,6 +30,8 @@ infra/tfplan
 infra/*.tfplan
 infra/**/tfplan
 infra/**/*.tfplan
+infra/tfplan.json
+infra/**/tfplan.json
 infra/.infracost/
 
 # --- IDE / OS ---

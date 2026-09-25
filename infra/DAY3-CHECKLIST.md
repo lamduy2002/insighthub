@@ -34,7 +34,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 |---|---|---|
 | 1 | `tflint --recursive` no warnings | ✅ xong |
 | 2 | `checkov -d infra/` no HIGH | ✅ 0 failed, 24 skipped kèm lý do inline (xem mục A/MH13) |
-| 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ❌ chưa làm — không có file `.rego` nào trong repo (ngoài phạm vi lượt sửa Terraform này) |
+| 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ✅ local (2026-09-25) — `infra/policy/terraform/main.rego` (18 rule `deny`, Rego v1) + `main_test.rego` (`conftest verify`: 23/23 pass). Chạy trên plan thật (`terraform show -json tfplan`): 18 passed, 0 failures. Danh sách rule + lý do helper `is_true`: `infra/SPEC.md` Mục 11. ⚠️ Pipeline CI (`iac.yml`) chưa có — CI phải cài Conftest 0.70.x. |
 | 4 | Tags: project, environment, owner, cost_center, managed_by | ✅ áp dụng quyết định J.1 |
 | 5 | Pipeline OIDC AWS (no long-lived keys) | ⚠️ code xong, chưa apply — `infra/bootstrap/github-oidc/` có OIDC provider + 2 role (`gh_plan`/`gh_apply`), `terraform plan` sạch (10 to add); chưa apply nên GitHub Actions thật vẫn chưa dùng được. Mọi apply thủ công hôm nay vẫn qua IAM user `DE000215` (long-lived key), hợp lệ cho thao tác thủ công. |
 | 6 | Secret qua AWS Secrets Manager | ✅ xong |
@@ -50,7 +50,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | `tflint --recursive` → 0/0 | ✅ |
 | `checkov -d infra/` → no HIGH | ✅ 0 failed (xem mục A/MH13) |
 | `terraform plan -out=tfplan` → deterministic | ✅ **sửa thật** — trước đây dòng này bị đánh dấu ✅ nhầm: `public_access_cidrs` lấy từ `data.http.my_ip` khiến plan **không** deterministic (đổi theo IP mạng). Đã bỏ `data.http`, dùng `var.operator_cidrs` bắt buộc truyền — giờ plan mới thật sự deterministic. |
-| `conftest test --policy policy/terraform tfplan.json` → pass — **bắt buộc** | ❌ — path chưa tồn tại, chưa có Rego nào; xem mục H và J cho quyết định path |
+| `conftest test --policy policy/terraform tfplan.json` → pass — **bắt buộc** | ✅ local — chạy từ `infra/`, plan thật: 18 passed, 0 failures (2026-09-25). ⚠️ `tfplan.json` **không được nằm trong `infra/` khi chạy checkov** (verify.py copy cả `infra/` rồi `checkov -d .` → checkov quét plan JSON, không thấy inline `#checkov:skip` → fail CKV2_AWS_57/50...). Sinh plan JSON ra ngoài `infra/` hoặc xoá trước bước checkov — xem SPEC Mục 11. |
 | `infracost breakdown --path infra/` | ✅ |
 | `gh run list --workflow=iac.yml` → ✓ | ❌ |
 | `kubectl get ns insighthub-dev` → exists | ❌ — namespace tên thật là `insighthub-dev` khi `var.environment=dev` (mã hoá `insighthub-${var.environment}`), code đã sẵn sàng, chưa apply |
@@ -80,6 +80,12 @@ Verifier **không tự chạy `conftest` bằng lệnh cứng trong code**. `scr
 
 **2. Tên scenario test bắt buộc trong `tests/milestones/day3/test_*.py`?**
 `scripts/verify.py:38`: `REQUIRED_TESTS[3] = {'test_policy_allows_valid', 'test_policy_denies_unsafe'}`. Đúng 2 tên. Theo đúng tên, 2 test này phải **tự chạy Conftest** (subprocess) trên 1 `tfplan.json` hợp lệ (kỳ vọng `allow`) và 1 `tfplan.json` vi phạm cố ý (kỳ vọng `deny`) — bản thân verifier chỉ kiểm JUnit report có 2 case này pass, không kiểm nội dung test làm gì bên trong.
+
+✅ **Đã làm (2026-09-25)** — `tests/milestones/day3/test_policy.py`: cả 2 test gọi `conftest test --policy infra/policy/terraform <fixture>` qua `subprocess` (không `shell=True`), fixture ở `tests/milestones/day3/fixtures/`:
+- `test_policy_allows_valid` — `valid_plan.json` phải exit 0.
+- `test_policy_denies_unsafe` — `invalid_plan.json` phải exit ≠ 0 **và** output phải chứa deny message của `publicly_accessible`, tag `owner`, `transit_encryption_enabled`, `instance_class` (không chỉ kiểm exit code, tránh test pass vì lỗi parse).
+- Test đọc repo root từ env `INSIGHTHUB_REPO_ROOT` (verify.py set sẵn, xem `run_tests`); chạy tay: `INSIGHTHUB_REPO_ROOT=$PWD venv/bin/python -m pytest tests/milestones/day3` → 2 passed.
+- Dry-run `venv/bin/python scripts/verify.py day3 --ci-profile local --evidence-dir evidence` (evidence `mode: fixture`, deployment = placeholder) → `INCOMPLETE: Local preparation checked; GitHub pipeline remains mandatory for Day 3` — thông báo này chỉ xuất hiện **sau khi** pytest 2 test + fmt/init/validate/checkov đều pass (`scripts/verify.py:519-531`, rồi `main()` dòng 891). Phải dùng `venv/bin/python` (3.11, có pytest/PyYAML) vì verify.py chạy pytest bằng `sys.executable`; `/usr/bin/python3` (3.10) không có pytest → INCOMPLETE sớm.
 
 **3. Cấu trúc `evidence/day3.json`?**
 Theo `scripts/verify.py:513-517` + `VERIFICATION_CONTRACT.md:42`: 2 artifact role bắt buộc — `deployment` (file dùng để tính `artifact_sha256`) và `ci_binding` (file JSON có 2 field `source_sha256`, `artifact_sha256`, phải khớp `expected = {'source_sha256': fingerprint(repo), 'artifact_sha256': sha(deployment)}`). Envelope chung (`evidence()` dòng 310-318): `schema_version`, `day`, `mode` (real/fixture), `observed_at` (RFC3339, ≤24h), `source_sha256`, `artifacts: {role: {path, sha256}}`.
