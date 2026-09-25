@@ -170,7 +170,14 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 
 ## L. Chuẩn bị trước khi deploy (bổ sung — không có mục riêng trong spec nhưng cần cho MH10/§2.3)
 
-- **Cài `metrics-server`** trước khi deploy HPA cho `api` (§2.3 dòng 196) — HPA không hoạt động nếu thiếu `metrics-server` để cung cấp CPU/memory metrics. Cần cài **cả trên minikube** (giai đoạn test offline, `minikube addons enable metrics-server`) **và trên EKS** (giai đoạn apply cuối, qua Helm chart `metrics-server` chính thức hoặc manifest components.yaml), vì đây là 2 cluster khác nhau, không tự động có sẵn.
+- **Cài `metrics-server`** trước khi deploy HPA cho `api` (§2.3 dòng 196) — HPA không hoạt động nếu thiếu `metrics-server` để cung cấp CPU/memory metrics. Cần cài **cả trên cluster local** (kind riêng — mục O.13; trước đây ghi minikube) **và trên EKS** (Helm chart `metrics-server` chính thức), vì đây là 2 cluster khác nhau, không tự động có sẵn.
+- **Add-on cluster bắt buộc trên EKS** (Helm, sau `platform` apply, trước Helm app):
+  1. Secrets Store CSI Driver — bật `syncSecret.enabled=true` (app chỉ đọc env, mục N.1).
+  2. AWS provider ASCP (`secrets-store-csi-driver-provider-aws`).
+  3. `metrics-server` (HPA api).
+  4. AWS Load Balancer Controller — `serviceAccount.create=false`, dùng SA `aws-load-balancer-controller` do root platform tạo (IRSA), `vpcId` = output core `vpc_id`.
+  Tất cả **phải gỡ trước platform destroy** (SPEC.md Mục 8, bước 5). ALB Controller chỉ gỡ **sau khi** ALB đã bị xóa (bước 3) — controller là thành phần xóa ALB qua finalizer Ingress.
+- **Hook Helm không bị `helm uninstall` xóa**: `SecretProviderClass` + migration Job là hook `pre-install,pre-upgrade`. Migration Job dùng `helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded`; `SecretProviderClass` không tự xóa được (phải tồn tại suốt vòng đời pod) → teardown xóa tường minh `kubectl -n insighthub-<env> delete secretproviderclass,job -l app.kubernetes.io/instance=<release>` **trước** khi gỡ CSI driver (SPEC.md Mục 8, bước 2).
 
 ## M. Việc đã làm trong lượt sửa Terraform này (2026-09-23, KHÔNG apply)
 
@@ -179,6 +186,71 @@ Toàn bộ thay đổi ở `infra/main.tf`, `infra/variables.tf`, `infra/provide
 **Lượt tiếp theo cùng ngày**: sửa `copy_tags_to_snapshot`/`encryption_configuration` (đóng CKV2_AWS_60 + CKV_AWS_136×3 bằng code), chuyển 24 finding còn lại thành `#checkov:skip` tại resource → **`checkov -d infra/`: 157 passed, 0 failed, 24 skipped, exit 0**. `tflint`/`validate` vẫn sạch.
 
 Chưa làm trong lượt này (nằm ngoài phạm vi "chỉ Terraform"): file Rego (`infra/policy/terraform/`), `tests/milestones/day3/test_*.py`, `.github/workflows/iac.yml`, Helm chart, `ai-prompts/day3.md`, `lab-manifest.json` lập trước (vẫn còn nợ từ lượt trước).
+
+## N. Đầu vào deploy — audit Helm/pipeline (2026-09-25, chỉ đọc code app)
+
+Đối chiếu spec §0.4, §2.3, §2.4, §2.5, §5.4, §7 và `GETTING_STARTED.md` §2. Kết luận: **không phải sửa code app** (giữ contract Day 1); 2 việc bắt buộc nằm ở Terraform (C1/C2, đã làm).
+
+**N.1 Biến môi trường → ConfigMap/Secret.** api và worker dùng chung `Settings` (pydantic-settings; env = tên field viết hoa) — `api/app/core/config.py:13-65`; worker copy nguyên `api/app` (`ingestion-worker/Dockerfile:18`). App **chỉ đọc env** (`env_file=".env"`, không `secrets_dir` — `config.py:14-20`) → Secrets Store CSI phải dùng `secretObjects` sync thành K8s Secret (driver `syncSecret.enabled=true`) rồi `secretKeyRef`/`envFrom`; K8s Secret sync chỉ tồn tại khi có pod mount volume CSI → **api, worker, migration Job đều mount CSI**; rotate cần restart pod.
+
+| Biến | Service | Bắt buộc | Bí mật | Đích |
+|---|---|---|---|---|
+| `DATABASE_URL` | api, worker | Có (default trỏ `postgres:5432`, `config.py:25-28`) | **Có** | Secret ← field `database_url` của `db-credentials` |
+| `REDIS_URL` | api, worker | Có (default `redis://redis:6379/0`, `config.py:29`) | **Có** | Secret ← field `redis_url` của `redis-credentials` |
+| `RAG_MODE`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER` | api, worker | **Đặt tường minh** — code default `real`/`gemini` (`config.py:30-36`) | Không | ConfigMap = `fixture` |
+| `EMBEDDING_DIM`(1024), `EMBEDDING_REVISION`, `LLM_MAX_TOKENS`, `PROVIDER_TIMEOUT_SECONDS` | api, worker | Tùy chọn (`config.py:54-59`) | Không | ConfigMap |
+| `LOG_LEVEL`, `ENVIRONMENT`, `MAX_UPLOAD_BYTES`, `CHUNK_*`, `RETRIEVAL_TOP_K`, `HNSW_EF_SEARCH` | api, worker | Tùy chọn (`config.py:23-24, 60-65`) | Không | ConfigMap khi cần |
+| `*_API_KEY` | api, worker | Chỉ khi `RAG_MODE=real` (`config.py:78-81`) | **Có** | Không dùng (fixture) |
+| `*_MODEL`, `OPENAI_BASE_URL`, `OLLAMA_*` | api, worker | Chỉ khi real (`config.py:38-53`) | Không | — |
+| `API_INTERNAL_URL` | web | Tùy chọn, default `http://api:8000` (`web/lib/api.ts:4`) | Không | env/ConfigMap |
+
+**N.2 Postgres.** App dùng `DATABASE_URL` (psycopg conninfo) — `api/app/core/db.py:26-27`. libpq hỗ trợ `?sslmode=require` và percent-decode password trong URI (đã kiểm: `urlencode()` của Terraform với `#?[]:%!&*()=+{}<>~$^` → libpq decode khớp nguyên văn). → **C1**. `sslmode=require` là đủ (RDS `rds.force_ssl = 1`); `verify-full` + `sslrootcert` (CA bundle RDS mount vào pod) là **tùy chọn**.
+
+**N.3 Redis.** api `api/app/core/queue.py:18-19`, worker `ingestion-worker/worker/settings.py:23` — cả hai `RedisSettings.from_dsn(REDIS_URL)`. arq 0.28.0 hỗ trợ `rediss://` (`ssl = scheme == 'rediss'`, `ssl_cert_reqs='required'`, `ssl_check_hostname=False`) nhưng lấy `password` từ `urlparse` **không unquote** → token chứa `#`, `?`, `[`, `]` làm hỏng URL, token percent-encode bị gửi nguyên `%XX` → AUTH fail. → **C2** (không sửa app). Cert ElastiCache do Amazon cấp, python slim có CA hệ thống — xác nhận ở smoke.
+
+**N.4 Upload.** File đi qua **payload job Redis** (`api/app/routers/documents.py:39` `enqueue_job(..., content)`; worker nhận `content: bytes` — `ingestion-worker/worker/tasks.py:68-69`). **Không cần PVC/volume chung.** Mỗi job ≤ 10 MB trong Redis, `max_jobs = 10` (`settings.py:26`) + retry 3 lần — theo dõi RAM `cache.t3.micro` (~0,5 GB).
+
+**N.5 Web.** Browser gọi đường dẫn tương đối cùng origin (`/api/documents`, `/api/proxy?target=upload|chat` — `web/components/UploadPanel.tsx:20,38,58`, `ChatPanel.tsx:18`); route handler server gọi `${API_URL}` (`web/app/api/proxy/route.ts:27`, `web/lib/api.ts:22,28`). **Không có `NEXT_PUBLIC_*`**, `API_INTERNAL_URL` đọc runtime server-side, trang `force-dynamic` (`web/app/page.tsx:6`) → không sửa source web (§2.5), chỉ đặt env `API_INTERNAL_URL=http://<api-svc>.<ns>.svc.cluster.local:8000`. Sau Ingress HTTPS không có mixed content. Acceptance §7.5 gọi thẳng `/healthz`, `/documents`, `/chat` trên host → Ingress route `/healthz`, `/readyz`, `/documents`, `/chat` → api, `/` → web (web dùng prefix `/api/*`, không trùng); **không public `/metrics`**.
+
+**N.6 init.sql.** `CREATE EXTENSION IF NOT EXISTS vector;` (`infra/db/init.sql:3`); `VECTOR(1024)` (dòng 51) khớp `EMBEDDING_DIM=1024`; **không có `shared_preload_libraries`** (init.sql + docker-compose.yml) — đúng §0.4. Idempotent (`IF NOT EXISTS`), khối DO chặn schema legacy (dòng 5-17). **Chạy trên RDS**: K8s Job image `pgvector/pgvector:0.8.2-pg16@sha256:00ba258a…` (`docker-compose.yml:5`, có `psql`), user 999, `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /sql/init.sql`; credential `DATABASE_URL` qua CSI; master user có `rds_superuser` → `CREATE EXTENSION` được. **Một nguồn duy nhất (quyết định)**: Helm nhận SQL bằng `--set-file` từ `infra/db/init.sql` lúc install/upgrade vào ConfigMap — **không copy file vào chart**. Job phải chạy **trước** api/worker (startup `initialize_database()` → `check_schema` fail khi thiếu schema — `api/app/core/db.py:43-49`, `ingestion-worker/worker/settings.py:13-14`) → Helm hook `pre-install,pre-upgrade`; `SecretProviderClass` cũng là hook với weight thấp hơn Job. Kiểm trước: `SELECT * FROM pg_available_extensions WHERE name='vector'` trên RDS 16.15.
+
+**N.7 Dockerfile.**
+
+| Image | Base (pin digest) | User | Port | HEALTHCHECK | CMD |
+|---|---|---|---|---|---|
+| api | `python:3.12.14-slim@sha256:78387bc3…` (`api/Dockerfile:3`) | `appuser` 1001/1001 (dòng 13-14, 19) | 8000 | `/readyz` (dòng 21-22) | `uvicorn app.main:app --host 0.0.0.0 --port 8000` |
+| worker | như api (`ingestion-worker/Dockerfile:4`) | `appuser` 1001/1001 (dòng 14-15, 20) | — | `arq --check` (dòng 21-22) | `arq worker.settings.WorkerSettings` |
+| web | `node:24.20.0-alpine@sha256:e67514e5…` (`web/Dockerfile:4,10,18`) | `nextjs` 1001 / `nodejs` 1001 (dòng 22-23, 28) | 3000 | `/api/health` (dòng 32-33) | `node server.js` |
+
+Non-root trên K8s: `USER` trong image là **tên** → với `runAsNonRoot: true` kubelet không xác minh được ("non-numeric user") → **bắt buộc `runAsUser: 1001`, `runAsGroup: 1001`** (+ `fsGroup: 1001`). `readOnlyRootFilesystem: true` cần `emptyDir` `/tmp` (api: python-multipart spool > 1 MB; worker) và `/app/.next/cache` (web). Thêm `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault`. K8s bỏ qua `HEALTHCHECK` Docker.
+
+**N.8 Probe.** api: liveness `/healthz` (không chạm DB — `api/app/routers/health.py:12-14`), readiness `/readyz` (DB/schema/identity, 503 khi chưa sẵn sàng — dòng 17-23), thêm startupProbe (lifespan chờ pool ≤ 15 s — `db.py:46`). web: `/api/health` (`web/app/api/health/route.ts`, không kiểm api). worker: **exec `arq --check worker.settings.WorkerSettings`** (quyết định: không sửa code worker trong Day 3), `periodSeconds` ≥ 60. ⚠️ **Worker health endpoint (§5.4) là Should-have Day 1 chưa làm**; worker không có endpoint HTTP health/metrics (metrics worker là Nice-to-have §5.4 — chuẩn bị Day 4). arq mặc định `health_check_interval = 3600` (key TTL 3601 s) → probe **kém nhạy**: worker treo vẫn "khỏe" tới ~1 giờ. Metrics hiện chỉ ở api `/metrics` (`api/app/main.py:89-99`).
+
+**N.9 RAG_MODE.** Code default `real` + `gemini` (`config.py:30-36`), chỉ compose/.env đặt fixture (`docker-compose.yml:32-34`, `.env.example:3-5`) → EKS phải đặt tường minh 3 biến `fixture`. Hợp lệ Day 3: "For Days 1-5 … the application may use a fixture LLM" (`scripts/VERIFICATION_CONTRACT.md:76-77`). Không trộn fixture/real trên cùng DB (`GETTING_STARTED.md:45`) — chuyển real cần DB/schema mới.
+
+**N.10 Local (kind).** Postgres: `pgvector/pgvector:0.8.2-pg16@sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc` (`docker-compose.yml:5`). Redis: **quyết định dùng `redis:7.x` pin digest** (khớp spec §2.4 "Redis 7" và ElastiCache 7.1), **không** dùng `redis:8.2.2-alpine` của compose (`docker-compose.yml:20`); **không sửa docker-compose.yml**. Local không TLS/auth (`redis://`), schema chạy bằng cùng migration Job như AWS.
+
+**N.11 `starter.yml`.** Trigger `push` + `pull_request` mọi nhánh (dòng 2-4), `permissions: contents: read` (5-6), không cloud credential; chạy compose up → verifier tests → `make test-backend` → MCP tests → HTTP smoke → down `if: always()` (20-38). `actions/checkout` pin SHA `3d3c42e5…` (v7.0.1, dòng 17), image node pin digest (dòng 28). **Không xung đột** với `iac.yml` (tên workflow/job khác); lưu ý cả hai chạy trên PR (build image 2 lần); `id-token: write` chỉ cấp ở job cần trong `iac.yml`; giữ nguyên `starter.yml` làm baseline.
+
+**N.12 Giới hạn upload 10 MB.** api `max_upload_bytes = 10 MiB` (`config.py:65`); middleware chặn body > 10 MiB + 64 KB → 413 (`api/app/core/upload_limit.py:20-43`); handler kiểm lại (`documents.py:22-26`); web proxy 11 MB (`web/app/api/proxy/route.ts:8`). **ALB không giới hạn kích thước body** → giới hạn nằm hoàn toàn ở app, không cần annotation body size. ALB idle timeout mặc định 60 s đủ cho upload/chat fixture; web proxy chờ tới 90 s (`route.ts:25`) → khi chuyển LLM real đặt `idle_timeout.timeout_seconds` ≈ 90-120. Target group health check: api `/readyz`, web `/api/health`.
+
+### (A) Sửa code app
+**Không có.** Contract Day 1 giữ nguyên; worker probe dùng `arq --check` với cấu hình hiện tại (N.8).
+
+### (B) Chỉ cấu hình trong Helm
+1. ConfigMap: `RAG_MODE`/`LLM_PROVIDER`/`EMBEDDING_PROVIDER=fixture`, `EMBEDDING_DIM=1024`, `EMBEDDING_REVISION`, `LOG_LEVEL`; web `API_INTERNAL_URL`.
+2. Secrets Store CSI: `SecretProviderClass` (2 ARN từ output core `db_secret_arn`/`redis_secret_arn`, `jmesPath` → `database_url`, `redis_url`) + `secretObjects` → K8s Secret; driver `syncSecret.enabled=true`; api/worker/Job mount CSI; SA `insighthub` (IRSA).
+3. Migration Job — hook `pre-install,pre-upgrade`, image pgvector (psql), SQL từ `--set-file` `infra/db/init.sql` → ConfigMap; `SecretProviderClass` hook weight thấp hơn.
+4. securityContext: `runAsNonRoot`, `runAsUser/runAsGroup/fsGroup 1001`, `readOnlyRootFilesystem` + `emptyDir` (`/tmp`, `/app/.next/cache`), drop ALL, seccomp RuntimeDefault.
+5. Probe: api `/healthz` / `/readyz` / startupProbe; web `/api/health`; worker exec `arq --check`, period ≥ 60 s.
+6. Ingress ALB: `/healthz`, `/readyz`, `/documents`, `/chat` → api; `/` → web; không `/metrics`; ACM cert, listen 443, ssl-redirect, healthcheck-path theo service, idle timeout.
+7. HPA api: `resources.requests` + metrics-server (chưa có trên EKS — mục L).
+8. Values local: StatefulSet `pgvector/pgvector:0.8.2-pg16@sha256:00ba…` + `redis:7.x@sha256:…`; `redis://`, không sslmode. Values AWS: **không StatefulSet**.
+9. Không PVC dùng chung.
+
+### (C) Ngoài app, bắt buộc — Terraform `infra/modules/data` (✅ đã làm 2026-09-25)
+- **C1** ✅ secret `db-credentials` thêm `database_url = "postgresql://<db_username>:${urlencode(password)}@<address>:5432/insighthub?sslmode=require"`. `db_username` thêm validation `^[A-Za-z][A-Za-z0-9_]{0,62}$` (quy tắc master username RDS) → nhúng nguyên văn an toàn.
+- **C2** ✅ `random_password.redis_auth`: `length = 32`, `override_special = "-_"` (chỉ `[A-Za-z0-9-_]`, ~192 bit); secret `redis-credentials` thêm `redis_url = "rediss://:<token>@<primary_endpoint>:6379/0"`. Kiểm 2000 token ngẫu nhiên từ bộ ký tự này → arq `from_dsn` parse đúng password/host/port/ssl.
 
 ## O. Bổ sung thiết kế (2026-09-25 — refactor core/platform, chưa apply)
 

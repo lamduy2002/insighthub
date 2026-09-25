@@ -356,21 +356,42 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
     `terraform destroy` cluster, đúng thứ tự trong
     `docs/Guide_Local_AWS_Cost_DO2603.md`. Nếu bỏ qua bước này, ALB có thể bị
     bỏ sót và tiếp tục tính phí dù EKS đã bị xóa.
+- **Add-on cluster bắt buộc trên EKS** (cài bằng Helm sau platform, trước app;
+  không phải Terraform): Secrets Store CSI Driver (bật `syncSecret.enabled=true`),
+  AWS provider ASCP, `metrics-server` (HPA api), AWS Load Balancer Controller
+  (dùng SA `aws-load-balancer-controller` do platform tạo, `serviceAccount.create=false`).
+  Tất cả phải **gỡ trước platform destroy**.
+- **Hook Helm không bị `helm uninstall` xóa**: `SecretProviderClass` và migration
+  Job là hook `pre-install,pre-upgrade` → Helm không theo dõi chúng như resource
+  của release. Migration Job đặt `helm.sh/hook-delete-policy:
+  before-hook-creation,hook-succeeded`; `SecretProviderClass` (cần tồn tại suốt
+  vòng đời pod) **không** dùng `hook-succeeded` → teardown phải xóa tường minh
+  (bước 2 dưới đây). Phải xóa **trước** khi gỡ CSI driver, nếu không object CRD
+  còn sót sau khi driver/CRD bị gỡ.
 - **Thứ tự teardown đầy đủ** (bắt buộc đúng trình tự, không đảo; Guide cấm
   `terraform state rm`/force-remove finalizer để né lỗi dependency). Mọi
   plan destroy ghi ra `$PLAN_DIR` (`/tmp/insighthub-plans` local,
   `$RUNNER_TEMP` CI), review rồi apply đúng file plan đó:
-  1. `helm uninstall` app (web/api/worker) trong `insighthub-<env>`, rồi
-     `aws-load-balancer-controller` và Secrets Store CSI Driver/ASCP.
-  2. Chờ ALB do Ingress tạo bị xóa hẳn — poll `aws elbv2 describe-load-balancers`
-     tới khi không còn ALB nào gắn tag cluster này (controller cần vài phút).
-  3. Xóa record Route53 (nếu đã trỏ domain cho HTTPS).
-  4. Platform destroy (cluster còn sống, IP trong `public_access_cidrs`):
+  1. `helm uninstall` release app (web/api/worker + Ingress) trong `insighthub-<env>`.
+     **Giữ ALB Controller đang chạy** — chính controller xóa ALB/target group
+     khi Ingress bị xóa (finalizer `ingress.k8s.aws/resources`); gỡ controller
+     trước sẽ bỏ sót ALB tính phí và làm Ingress kẹt finalizer, namespace
+     không xóa được.
+  2. Xóa hook còn sót: `kubectl -n insighthub-<env> delete secretproviderclass,job
+     -l app.kubernetes.io/instance=<release>` (Job thường đã tự xóa nhờ
+     hook-delete-policy; lệnh này để chắc chắn). K8s Secret do CSI sync tự bị
+     xóa khi không còn pod mount — kiểm `kubectl get secret -n insighthub-<env>`.
+  3. Chờ ALB bị xóa hẳn — poll `aws elbv2 describe-load-balancers` tới khi
+     không còn ALB nào gắn tag cluster này (controller cần vài phút).
+  4. Xóa record Route53 (nếu đã trỏ domain cho HTTPS).
+  5. Gỡ add-on cluster: `helm uninstall` AWS Load Balancer Controller,
+     AWS provider ASCP, Secrets Store CSI Driver, `metrics-server`.
+  6. Platform destroy (cluster còn sống, IP trong `public_access_cidrs`):
      `terraform -chdir=infra/platform plan -destroy -out="$PLAN_DIR/platform-destroy.tfplan"`
      → review → `terraform -chdir=infra/platform apply "$PLAN_DIR/platform-destroy.tfplan"`.
-  5. Core destroy: `terraform -chdir=infra plan -destroy -out="$PLAN_DIR/core-destroy.tfplan"`
+  7. Core destroy: `terraform -chdir=infra plan -destroy -out="$PLAN_DIR/core-destroy.tfplan"`
      → review → apply file đó (EKS, RDS, Redis, VPC, IAM, KMS, ECR, Secrets Manager).
-  6. (Chỉ cuối Day 3, không phải mỗi lượt) gỡ inline policy tự cấp cho `DE000215`
+  8. (Chỉ cuối Day 3, không phải mỗi lượt) gỡ inline policy tự cấp cho `DE000215`
      (`do2603-lamduy2002-additional-permissions`). Bootstrap không destroy theo lượt.
 
   Quy trình `terraform destroy -target=kubernetes_*` cũ đã **bỏ** — resource
