@@ -37,10 +37,18 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
 
 locals {
   gh_oidc_host = replace(aws_iam_openid_connect_provider.github_actions.url, "https://", "")
+  account_id   = data.aws_caller_identity.current.account_id
+
+  state_bucket_arn  = "arn:aws:s3:::${var.state_bucket}"
+  state_object_arns = [for k in var.state_keys : "${local.state_bucket_arn}/${k}"]
+  lock_object_arns  = [for k in var.state_keys : "${local.state_bucket_arn}/${k}.tflock"]
+  plan_objects_arn  = "${local.state_bucket_arn}/${var.plan_prefix}*"
+  lab_cluster_arn   = "arn:aws:eks:${var.aws_region}:${local.account_id}:cluster/${var.eks_cluster_name}"
 }
 
 # ============================================================
-# Role "plan" — trust pull_request, chỉ đọc
+# Role "plan" — trust GitHub Environment "infra-plan", chỉ đọc + ghi saved
+# plan mã hóa. PR từ fork không có environment/id-token nên không assume được.
 # ============================================================
 resource "aws_iam_role" "gh_plan" {
   name = "${var.project_name}-gh-plan-role"
@@ -54,7 +62,7 @@ resource "aws_iam_role" "gh_plan" {
       Condition = {
         StringEquals = {
           "${local.gh_oidc_host}:aud" = "sts.amazonaws.com"
-          "${local.gh_oidc_host}:sub" = "repo:${var.github_repo}:pull_request"
+          "${local.gh_oidc_host}:sub" = "repo:${var.github_repo}:environment:${var.plan_environment}"
         }
       }
     }]
@@ -79,25 +87,50 @@ resource "aws_iam_role_policy" "gh_plan_extra" {
         Sid      = "ReadAppSecrets"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = ["arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.project_name}/dev/*"]
+        Resource = ["arn:aws:secretsmanager:${var.aws_region}:${local.account_id}:secret:${var.project_name}/dev/*"]
       },
       {
         Sid      = "ListStateBucket"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
-        Resource = ["arn:aws:s3:::${var.state_bucket}"]
+        Resource = [local.state_bucket_arn]
         Condition = {
-          StringLike = { "s3:prefix" = ["insighthub/*"] }
+          StringLike = { "s3:prefix" = ["insighthub/*", "${var.plan_prefix}*"] }
         }
       },
       {
-        Sid    = "StateObjectAndLock"
-        Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = [
-          "arn:aws:s3:::${var.state_bucket}/${var.state_key}",
-          "arn:aws:s3:::${var.state_bucket}/${var.state_key}.tflock",
-        ]
+        # terraform plan chỉ ĐỌC state — không Put/Delete trên file state.
+        Sid      = "StateReadOnly"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = local.state_object_arns
+      },
+      {
+        # Native S3 lock (use_lockfile) tạo/xóa file .tflock kể cả khi plan.
+        Sid      = "StateLock"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Resource = local.lock_object_arns
+      },
+      {
+        # Chỉ ghi saved plan vào đúng prefix, bắt buộc SSE-KMS bằng đúng key
+        # tfplan (Put không kèm header mã hóa/sai key bị từ chối).
+        Sid      = "WriteSavedPlan"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = [local.plan_objects_arn]
+        Condition = {
+          StringEquals = {
+            "s3:x-amz-server-side-encryption"                = "aws:kms"
+            "s3:x-amz-server-side-encryption-aws-kms-key-id" = aws_kms_key.tfplan.arn
+          }
+        }
+      },
+      {
+        Sid      = "EncryptSavedPlan"
+        Effect   = "Allow"
+        Action   = ["kms:GenerateDataKey", "kms:Encrypt", "kms:DescribeKey"]
+        Resource = [aws_kms_key.tfplan.arn]
       },
     ]
   })
@@ -119,7 +152,7 @@ resource "aws_iam_role" "gh_apply" {
       Condition = {
         StringEquals = {
           "${local.gh_oidc_host}:aud" = "sts.amazonaws.com"
-          "${local.gh_oidc_host}:sub" = "repo:${var.github_repo}:environment:production"
+          "${local.gh_oidc_host}:sub" = "repo:${var.github_repo}:environment:${var.apply_environment}"
         }
       }
     }]
@@ -139,19 +172,29 @@ resource "aws_iam_role_policy" "gh_apply_state" {
         Sid      = "ListStateBucket"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
-        Resource = ["arn:aws:s3:::${var.state_bucket}"]
+        Resource = [local.state_bucket_arn]
         Condition = {
-          StringLike = { "s3:prefix" = ["insighthub/*"] }
+          StringLike = { "s3:prefix" = ["insighthub/*", "${var.plan_prefix}*"] }
         }
       },
       {
-        Sid    = "StateObjectAndLock"
-        Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = [
-          "arn:aws:s3:::${var.state_bucket}/${var.state_key}",
-          "arn:aws:s3:::${var.state_bucket}/${var.state_key}.tflock",
-        ]
+        Sid      = "StateObjectAndLock"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Resource = concat(local.state_object_arns, local.lock_object_arns)
+      },
+      {
+        # Tải saved plan đã được duyệt rồi xóa sau khi apply — không ghi.
+        Sid      = "ReadAndDeleteSavedPlan"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:DeleteObject"]
+        Resource = [local.plan_objects_arn]
+      },
+      {
+        Sid      = "DecryptSavedPlan"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource = [aws_kms_key.tfplan.arn]
       },
     ]
   })
@@ -194,18 +237,42 @@ resource "aws_iam_role_policy" "gh_apply_eks" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "eks:CreateCluster", "eks:DeleteCluster", "eks:DescribeCluster", "eks:UpdateClusterConfig",
-        "eks:CreateNodegroup", "eks:DeleteNodegroup", "eks:DescribeNodegroup", "eks:UpdateNodegroupConfig",
-        "eks:TagResource", "eks:UntagResource", "eks:ListTagsForResource",
-      ]
-      Resource = [
-        "arn:aws:eks:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${var.project_name}-*",
-        "arn:aws:eks:${var.aws_region}:${data.aws_caller_identity.current.account_id}:nodegroup/${var.project_name}-*/*/*",
-      ]
-    }]
+    Statement = [
+      {
+        Sid    = "ClusterAndNodegroupLifecycle"
+        Effect = "Allow"
+        Action = [
+          "eks:CreateCluster", "eks:DeleteCluster", "eks:DescribeCluster",
+          "eks:CreateNodegroup", "eks:DeleteNodegroup", "eks:DescribeNodegroup", "eks:UpdateNodegroupConfig",
+          "eks:TagResource", "eks:UntagResource", "eks:ListTagsForResource",
+        ]
+        Resource = [
+          "arn:aws:eks:${var.aws_region}:${local.account_id}:cluster/${var.project_name}-*",
+          "arn:aws:eks:${var.aws_region}:${local.account_id}:nodegroup/${var.project_name}-*/*/*",
+        ]
+      },
+      {
+        # Đổi public_access_cidrs (Terraform + bước tạm thêm/khôi phục IP
+        # runner — SPEC.md Mục 12): CHỈ trên đúng cluster lab, không wildcard.
+        Sid      = "UpdateLabClusterConfig"
+        Effect   = "Allow"
+        Action   = ["eks:UpdateClusterConfig", "eks:DescribeUpdate"]
+        Resource = [local.lab_cluster_arn]
+      },
+      {
+        Sid    = "ManageLabAccessEntries"
+        Effect = "Allow"
+        Action = [
+          "eks:CreateAccessEntry", "eks:DeleteAccessEntry", "eks:DescribeAccessEntry", "eks:UpdateAccessEntry",
+          "eks:ListAccessEntries", "eks:AssociateAccessPolicy", "eks:DisassociateAccessPolicy",
+          "eks:ListAssociatedAccessPolicies",
+        ]
+        Resource = [
+          local.lab_cluster_arn,
+          "arn:aws:eks:${var.aws_region}:${local.account_id}:access-entry/${var.eks_cluster_name}/*",
+        ]
+      },
+    ]
   })
 }
 
@@ -225,11 +292,14 @@ resource "aws_iam_role_policy" "gh_apply_data" {
         Action = [
           "rds:CreateDBInstance", "rds:DeleteDBInstance", "rds:DescribeDBInstances", "rds:ModifyDBInstance",
           "rds:CreateDBSubnetGroup", "rds:DeleteDBSubnetGroup", "rds:DescribeDBSubnetGroups",
+          "rds:CreateDBParameterGroup", "rds:DeleteDBParameterGroup", "rds:ModifyDBParameterGroup",
+          "rds:DescribeDBParameterGroups", "rds:DescribeDBParameters",
           "rds:AddTagsToResource", "rds:RemoveTagsFromResource", "rds:ListTagsForResource",
         ]
         Resource = [
           "arn:aws:rds:${var.aws_region}:${data.aws_caller_identity.current.account_id}:db:${var.project_name}-*",
           "arn:aws:rds:${var.aws_region}:${data.aws_caller_identity.current.account_id}:subgrp:${var.project_name}-*",
+          "arn:aws:rds:${var.aws_region}:${data.aws_caller_identity.current.account_id}:pg:${var.project_name}-*",
         ]
       },
       {
@@ -329,4 +399,82 @@ resource "aws_iam_role_policy" "gh_apply_iam" {
       },
     ]
   })
+}
+
+# ============================================================
+# ECR push — image build trong job apply (MH10). GetAuthorizationToken
+# không hỗ trợ resource-level (API chỉ nhận "*"); các action còn lại chỉ
+# trên repository của project.
+# ============================================================
+resource "aws_iam_role_policy" "gh_apply_ecr_push" {
+  name = "${var.project_name}-gh-apply-ecr-push"
+  role = aws_iam_role.gh_apply.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EcrLogin"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "EcrPushProjectRepos"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload", "ecr:PutImage", "ecr:BatchGetImage", "ecr:DescribeImages",
+        ]
+        Resource = "arn:aws:ecr:${var.aws_region}:${local.account_id}:repository/${var.project_name}/*"
+      },
+    ]
+  })
+}
+
+# ============================================================
+# KMS key cho saved plan (plans/ trong state bucket). Saved plan chứa giá
+# trị nhạy cảm dạng plaintext (random_password DB/Redis) → mã hóa bằng CMK
+# riêng, chỉ gh_plan được encrypt và gh_apply được decrypt; KHÔNG upload
+# plan làm GitHub artifact (repo public). Bucket tạo tay, ngoài state
+# Terraform → ép mã hóa bằng condition IAM của gh_plan, không bucket policy.
+# ============================================================
+resource "aws_kms_key" "tfplan" {
+  description             = "CMK ma hoa Terraform saved plan (${var.plan_prefix}) cho GitHub Actions"
+  enable_key_rotation     = true
+  deletion_window_in_days = 7
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableRootAccountFullAccess"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${local.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "PlanRoleEncrypt"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.gh_plan.arn }
+        Action    = ["kms:GenerateDataKey", "kms:Encrypt", "kms:DescribeKey"]
+        Resource  = "*"
+      },
+      {
+        Sid       = "ApplyRoleDecrypt"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.gh_apply.arn }
+        Action    = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource  = "*"
+      },
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_kms_alias" "tfplan" {
+  name          = "alias/${var.project_name}-tfplan"
+  target_key_id = aws_kms_key.tfplan.key_id
 }

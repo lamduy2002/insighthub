@@ -34,10 +34,37 @@ variable "state_bucket" {
   default     = "do2603-lamduy2002-insighthub-tfstate"
 }
 
-variable "state_key" {
-  description = "Key state của module chính (infra/) — dùng để scope quyền S3 cho 2 role GitHub Actions."
+variable "state_keys" {
+  description = "Key state của 2 root core (infra/) và platform (infra/platform/) — scope quyền S3 cho 2 role GitHub Actions."
+  type        = list(string)
+  default = [
+    "insighthub/core/terraform.tfstate",
+    "insighthub/platform/terraform.tfstate",
+  ]
+}
+
+variable "plan_prefix" {
+  description = "Prefix trong state bucket chứa saved plan (mã hóa KMS riêng). gh_plan chỉ ghi, gh_apply chỉ đọc + xóa."
   type        = string
-  default     = "insighthub/day3-terraform/terraform.tfstate"
+  default     = "plans/"
+}
+
+variable "eks_cluster_name" {
+  description = "Tên EKS cluster lab (infra/variables.tf) — eks:UpdateClusterConfig/DescribeUpdate chỉ cấp trên đúng ARN cluster này."
+  type        = string
+  default     = "insighthub-lab"
+}
+
+variable "plan_environment" {
+  description = "GitHub Environment của job plan — condition sub của gh_plan."
+  type        = string
+  default     = "infra-plan"
+}
+
+variable "apply_environment" {
+  description = "GitHub Environment của job apply (có required reviewer) — condition sub của gh_apply."
+  type        = string
+  default     = "production"
 }
 
 # Resource cấp account dùng chung, không xóa theo lượt lab — không cần
