@@ -1,0 +1,19 @@
+# Root CORE — ví dụ, GIÁ TRỊ GIẢ. Copy thành terraform.tfvars (gitignore)
+# rồi thay bằng giá trị thật; không commit file thật.
+aws_region  = "ap-southeast-1"
+environment = "dev"
+owner       = "lamduy2002"
+cost_center = "DO2603"
+expires_at  = "2026-01-01T18:00:00+07:00"
+
+# IP admin (/32) — lấy bằng: curl -s https://checkip.amazonaws.com
+# Không được chứa 0.0.0.0/0 hoặc ::/0 (validation sẽ chặn).
+admin_cidrs = ["203.0.113.10/32"]
+
+# Output gh_apply_role_arn của infra/bootstrap/github-oidc.
+ci_apply_role_arn = "arn:aws:iam::111122223333:role/insighthub-gh-apply-role"
+
+# IAM user/role của operator được cluster admin qua EKS access entry.
+operator_principal_arns = ["arn:aws:iam::111122223333:user/example-operator"]
+
+db_username = "insighthub_admin"

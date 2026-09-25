@@ -6,10 +6,12 @@
 # Bucket "do2603-lamduy2002-insighthub-tfstate" phải được tạo thủ công TRƯỚC
 # khi chạy `terraform init` (bucket này nằm ngoài phạm vi state mà Terraform
 # quản lý — tránh vấn đề "con gà quả trứng").
+# Root CORE — key insighthub/core/terraform.tfstate. Root platform/ dùng key
+# riêng insighthub/platform/terraform.tfstate (SPEC.md Mục 2).
 terraform {
   backend "s3" {
     bucket       = "do2603-lamduy2002-insighthub-tfstate"
-    key          = "insighthub/day3-terraform/terraform.tfstate"
+    key          = "insighthub/core/terraform.tfstate"
     region       = "ap-southeast-1"
     encrypt      = true
     use_lockfile = true

@@ -40,20 +40,40 @@ variable "expires_at" {
   type        = string
 }
 
-variable "operator_cidrs" {
+variable "admin_cidrs" {
   description = <<-EOT
-    Danh sách CIDR /32 (hoặc rộng hơn nếu cần) của IP operator được phép truy
-    cập EKS public endpoint (CKV_AWS_38). KHÔNG có default và KHÔNG tự động dò
-    IP qua data "http" — để plan deterministic giữa local và CI (Acceptance
-    §7.5: "terraform plan -out=tfplan → deterministic"). Operator tự lấy IP
-    hiện tại (vd `curl -s https://checkip.amazonaws.com`) rồi truyền qua
-    -var hoặc TF_VAR_operator_cidrs mỗi lần apply thật.
+    Danh sách CIDR (thường /32) của admin được phép gọi EKS public endpoint
+    (CKV_AWS_38). KHÔNG có default và KHÔNG tự dò IP qua data "http" — để
+    plan deterministic giữa local và CI (Acceptance §7.5). Job apply CI tạm
+    thêm IP runner bằng `aws eks update-cluster-config` rồi khôi phục đúng
+    danh sách này trong bước if: always() (SPEC.md Mục 12) — fresh plan sau
+    đó phải không có thay đổi.
   EOT
   type        = list(string)
 
   validation {
-    condition     = alltrue([for c in var.operator_cidrs : c != "0.0.0.0/0" && c != "::/0"])
-    error_message = "operator_cidrs không được chứa 0.0.0.0/0 hoặc ::/0 — phải là CIDR hẹp của IP operator (CKV_AWS_38)."
+    condition     = length(var.admin_cidrs) > 0 && alltrue([for c in var.admin_cidrs : can(cidrhost(c, 0)) && c != "0.0.0.0/0" && c != "::/0"])
+    error_message = "admin_cidrs phải có ít nhất 1 CIDR hợp lệ và không được chứa 0.0.0.0/0 hoặc ::/0 (CKV_AWS_38)."
+  }
+}
+
+variable "ci_apply_role_arn" {
+  description = "ARN IAM role GitHub Actions apply (output gh_apply_role_arn của infra/bootstrap/github-oidc). Truyền qua biến thay vì remote state bootstrap để core không phụ thuộc vòng đời bootstrap. Được tạo EKS access entry + AmazonEKSClusterAdminPolicy."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws:iam::[0-9]{12}:role/.+$", var.ci_apply_role_arn))
+    error_message = "ci_apply_role_arn phải là ARN IAM role (arn:aws:iam::<account>:role/<name>)."
+  }
+}
+
+variable "operator_principal_arns" {
+  description = "ARN IAM user/role của operator được cluster admin qua EKS access entry (không hardcode trong code, truyền qua .tfvars gitignore). Bắt buộc có ít nhất 1 vì bootstrap_cluster_creator_admin_permissions = false."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.operator_principal_arns) > 0 && alltrue([for a in var.operator_principal_arns : can(regex("^arn:aws:iam::[0-9]{12}:(user|role)/.+$", a))])
+    error_message = "operator_principal_arns cần ít nhất 1 ARN IAM user/role hợp lệ."
   }
 }
 
@@ -64,7 +84,7 @@ variable "vpc_cidr" {
 }
 
 variable "availability_zones" {
-  description = "Danh sách 2 AZ dùng cho 2 public subnet (EKS yêu cầu tối thiểu 2 AZ)."
+  description = "Danh sách 2 AZ — mỗi AZ 1 subnet public (EKS) + 1 subnet private (RDS/Redis). EKS yêu cầu tối thiểu 2 AZ."
   type        = list(string)
   default     = ["ap-southeast-1a", "ap-southeast-1b"]
 }
@@ -94,7 +114,7 @@ variable "db_instance_class" {
 }
 
 variable "db_engine_version" {
-  description = "Phiên bản PostgreSQL cho RDS. Đã xác nhận qua `aws rds describe-db-engine-versions --engine postgres --engine-version 16` — 16.15 là bản mới nhất còn được AWS hỗ trợ tại thời điểm viết spec (2026-09-22)."
+  description = "Phiên bản PostgreSQL cho RDS (major 16 — khớp family parameter group postgres16). Đã xác nhận qua `aws rds describe-db-engine-versions --engine postgres --engine-version 16` — 16.15 là bản mới nhất còn được AWS hỗ trợ tại thời điểm viết spec (2026-09-22)."
   type        = string
   default     = "16.15"
 }
