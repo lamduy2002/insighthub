@@ -379,13 +379,15 @@ không dùng `latest`), và runner phải có `conftest` trong `PATH` trước b
 `pytest tests/milestones/day3` (test gọi `shutil.which("conftest")`, thiếu
 binary → test FAIL, không skip).
 
-**Lệnh** (chạy từ `infra/`):
+**Lệnh** (chạy từ `infra/`; `PLAN_DIR=/tmp/insighthub-plans` ở local,
+`PLAN_DIR=$RUNNER_TEMP` ở CI — **không bao giờ** trong repo):
 
 ```bash
-terraform plan -out=tfplan
-terraform show -json tfplan > "$RUNNER_TEMP/tfplan.json"   # KHÔNG ghi vào infra/
-conftest test --policy policy/terraform "$RUNNER_TEMP/tfplan.json"
+terraform plan -out="$PLAN_DIR/tfplan"
+terraform show -json "$PLAN_DIR/tfplan" > "$PLAN_DIR/tfplan.json"
+conftest test --policy policy/terraform "$PLAN_DIR/tfplan.json"
 conftest verify --policy policy/terraform                   # unit test Rego (main_test.rego)
+terraform plan -destroy -out="$PLAN_DIR/teardown.tfplan"    # teardown cũng vậy
 ```
 
 ⚠️ `tfplan.json` **không được nằm trong `infra/`** khi chạy checkov:
@@ -394,6 +396,36 @@ quét cả plan JSON — nơi không có inline `#checkov:skip` — và fail l�
 accepted risk ở Mục 10 (đã gặp thật 2026-09-25: CKV2_AWS_57, CKV2_AWS_50...).
 `.gitignore` đã chặn `infra/**/tfplan.json` nhưng file vẫn tồn tại trên đĩa
 local/runner, nên phải ghi ra ngoài `infra/`.
+
+⚠️ **File plan trong `infra/` còn làm lệch `source_sha256`** (không chỉ làm
+checkov fail). `fingerprint()` hash **mọi file** dưới `SOURCE_ROOTS` (có
+`infra`), đi bằng `os.walk`, **không dùng git** → `.gitignore` không có tác
+dụng. `source_files()` chỉ bỏ qua thư mục trong `EXCLUDED_DIRS` và tên file
+`.env*`/`*.pyc`/`*.log`/`*.zip`/`*.html`/report — **không bỏ qua `tfplan`,
+`tfplan.json`, `teardown.tfplan`, `lab.tfplan`**. Plan nằm lại trong `infra/`
+ở local nhưng không có trên runner CI → `source_sha256` local ≠ CI → verify
+FAIL ở bước so khớp `source-manifest.json`. Đã đo thật 2026-09-25: có 3 file
+plan (`infra/tfplan`, `infra/teardown.tfplan`,
+`infra/bootstrap/github-oidc/tfplan`) → `6e7de32b…`; chuyển ra
+`/tmp/insighthub-plans/` → `0456ae13…`. **Quy tắc: mọi `terraform plan`,
+`terraform show -json`, `terraform plan -destroy` đều ghi ra ngoài repo.**
+Chi tiết `EXCLUDED_DIRS`: `infra/DAY3-CHECKLIST.md` mục K.
+
+**Môi trường chạy verifier**: `scripts/verify.py` cần **Python 3.11+** và
+chạy pytest bằng chính `sys.executable`, nên phải gọi bằng interpreter của
+venv đã cài dependency theo `GETTING_STARTED.md` mục "Milestone verifier
+dependencies":
+
+```bash
+python3.11 -m venv venv
+venv/bin/python -m pip install --require-hashes -r scripts/requirements-verification.txt
+venv/bin/python scripts/verify.py day3 --ci-profile github --ci-repo <owner/repo> --ci-run-id <id>
+```
+
+Pipeline CI phải làm **đúng như vậy** (`actions/setup-python` pin 3.11+,
+`pip install --require-hashes`, không `pip install pytest` tự do). Venv đặt
+ở root repo (`venv/`) không ảnh hưởng fingerprint vì root không thuộc
+`SOURCE_ROOTS` và `venv`/`.venv` nằm trong `EXCLUDED_DIRS`.
 
 **Danh sách rule (`main.rego`, 18 rule `deny`)** — resource đang bị xoá
 (`actions == ["delete"]` hoặc `after == null`) được bỏ qua qua `is_active()`:

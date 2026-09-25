@@ -152,6 +152,20 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 
 **Mọi sửa source sau bước 2** (kể cả sửa nhỏ, chưa commit) làm `fingerprint(repo)` lệch khỏi `source_sha256` đã đóng băng trong `source-manifest.json` → verify FAIL ngay ở bước so khớp (`scripts/verify.py:547`). Nếu cần sửa thêm, phải quay lại bước 2 (chạy CI lại).
 
+**Ràng buộc bổ sung — file plan không được nằm trong repo** (đo thật 2026-09-25):
+- `fingerprint()` → `source_files()` (`scripts/verify.py:124`) đi `os.walk` trên mọi thư mục `SOURCE_ROOTS` (có `infra`), **không dùng git** → `.gitignore` không loại được gì. Chỉ bỏ qua thư mục trong `EXCLUDED_DIRS` và file `.env*`, `*.pyc`, `*.log`, `*.zip`, `*.html`, `REPORT_NAME`.
+- `scripts/verify.py:32-34`:
+  ```python
+  EXCLUDED_DIRS = {'.git', '.venv', 'venv', 'node_modules', '__pycache__', '.next',
+                   '.pytest_cache', '.terraform', 'dist', 'build', 'coverage', 'reports',
+                   'evidence', 'artifacts', 'test-results'}
+  ```
+  → `infra/.terraform/` (và `infra/bootstrap/github-oidc/.terraform/`) **bị loại** ✅ (so khớp theo tên thư mục ở mọi cấp). `venv/` **bị loại** ✅ (thực tế `venv/` ở root cũng không thuộc `SOURCE_ROOTS`). `.terraform.lock.hcl` **không** bị loại — đúng, vì file này được commit.
+- **Không** bị loại: `tfplan`, `tfplan.json`, `teardown.tfplan`, `lab.tfplan`, `*.tfstate*` → nếu nằm trong `infra/` ở local (không có trên runner) thì `source_sha256` local ≠ CI. Đã đo: 3 file plan (`infra/tfplan`, `infra/teardown.tfplan`, `infra/bootstrap/github-oidc/tfplan`) → `6e7de32b…`; chuyển sang `/tmp/insighthub-plans/` → `0456ae13…`. `find infra -name "*tfplan*"` giờ rỗng.
+- **Quy tắc**: mọi `terraform plan -out`, `terraform show -json`, `terraform plan -destroy -out` đều ghi ra ngoài repo — `/tmp/insighthub-plans/` ở local, `$RUNNER_TEMP` ở CI (lệnh mẫu: `infra/SPEC.md` Mục 11). Trước bước 2 và bước 5: chạy `find infra -name "*tfplan*" -o -name "*.tfstate*"` phải rỗng.
+
+**Ràng buộc bổ sung — môi trường verifier**: `scripts/verify.py` cần **Python 3.11+**, và chạy pytest bằng `sys.executable` → phải gọi bằng Python của venv đã cài `python -m pip install --require-hashes -r scripts/requirements-verification.txt` (`GETTING_STARTED.md` mục "Milestone verifier dependencies"). `/usr/bin/python3` (3.10, không pytest) → INCOMPLETE ngay ở `run_tests`. Pipeline CI phải làm đúng như vậy: `setup-python` 3.11+, venv, `pip install --require-hashes`, rồi chạy verifier bằng Python của venv.
+
 **Ràng buộc bổ sung cho bước 2 — thời điểm chạy CI lần cuối**: phải chạy khi **state của module chính (`infra/`) đang rỗng** (sau teardown, chưa apply lại). Lý do: provider `kubernetes` dùng `exec` auth gọi `aws eks get-token` (mục J.5) — nếu `iac.yml` có job nào chạm tới provider này (kể cả chỉ `terraform plan`/`validate` với backend thật, không chỉ riêng `apply`), job đó cần **endpoint EKS cluster khả truy cập từ GitHub-hosted runner**, nhưng `public_access_cidrs = var.operator_cidrs` (mục J.4) chỉ whitelist đúng IP operator — **runner GitHub Actions luôn bị chặn** (IP khác, không nằm trong `operator_cidrs`). Do đó: chạy CI lần cuối cho `verification-source` khi cluster **chưa tồn tại** (state rỗng) để tránh job liên quan tới cluster bị timeout/lỗi kết nối; job đó chỉ nên chạy `fmt/validate/tflint/checkov/plan` (không cần cluster sống) — apply thật vẫn làm thủ công tại local như các lượt trước.
 
 ## L. Chuẩn bị trước khi deploy (bổ sung — không có mục riêng trong spec nhưng cần cho MH10/§2.3)
