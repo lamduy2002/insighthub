@@ -14,7 +14,16 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-5"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    checkov.io/skip1: CKV_K8S_21=helm template khong truyen -n nen render ra namespace default; cai dat that luon co -n insighthub-<env> - xem SPEC.md muc 13
+{{- /*
+Guard: placeholder chỉ được phép tồn tại khi render tĩnh (Checkov/`helm template`).
+Deploy thật mà chưa truyền --set-file thì fail ngay. Xem "insighthub.isTemplateRender".
+*/ -}}
+{{- $sql := .Values.migration.initSql | required "migration.initSql trống — bắt buộc truyền --set-file migration.initSql=infra/db/init.sql" -}}
+{{- if and (hasPrefix (include "insighthub.initSqlPlaceholderPrefix" .) (trim $sql)) (not (include "insighthub.isTemplateRender" .)) -}}
+{{- fail "migration.initSql vẫn là placeholder — deploy thật phải truyền --set-file migration.initSql=infra/db/init.sql" -}}
+{{- end }}
 data:
   init.sql: |
-{{ .Values.migration.initSql | required "migration.initSql trống — bắt buộc truyền --set-file migration.initSql=infra/db/init.sql" | indent 4 }}
+{{ $sql | indent 4 }}
 {{- end }}

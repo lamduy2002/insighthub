@@ -68,6 +68,16 @@ redis:
       cpu: 200m
       memory: 256Mi
 
+# NetworkPolicy cho Postgres/Redis: chi pod cua chart app trong cung namespace
+# duoc vao 5432/6379. Pod app mang label app.kubernetes.io/name: insighthub
+# (Chart.Name cua chart app), con pod local-deps mang insighthub-local-deps ->
+# selector nay khong tu bat chinh no.
+networkPolicy:
+  enabled: true
+  appPodSelector:
+    matchLabels:
+      app.kubernetes.io/name: insighthub
+
 containerSecurityContext:
   readOnlyRootFilesystem: true
   allowPrivilegeEscalation: false

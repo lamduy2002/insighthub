@@ -4,10 +4,11 @@ metadata:
   name: {{ include "insighthub.webServiceName" . }}
   labels:
     {{- include "insighthub.componentLabels" (dict "ctx" . "component" "web") | nindent 4 }}
-  {{- with .Values.web.service.annotations }}
   annotations:
+    checkov.io/skip1: CKV_K8S_21=helm template khong truyen -n nen render ra namespace default; cai dat that luon co -n insighthub-<env> - xem SPEC.md muc 13
+    {{- with .Values.web.service.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
   type: ClusterIP
   ports:

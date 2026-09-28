@@ -1,0 +1,44 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+Chi cho pod cua chart app (app.kubernetes.io/name: insighthub) trong CUNG
+namespace vao dung cong datastore. Dong CKV2_K8S_6 bang policy that, khong skip.
+
+Chi Ingress: egress de mo de pod van resolve DNS va khong can mo them luat.
+Local-deps khong co doi tac ngoai namespace nen khong dung namespaceSelector.
+
+Luu y: kind (kindnet/kube-network-policies) co THUC THI NetworkPolicy; tren EKS
+thi VPC CNI mac dinh khong - day cung la ly do chart app khong khai policy
+tuong tu (xem SPEC.md muc 10).
+*/ -}}
+{{- range $c := (list
+      (dict "component" "postgres" "name" (include "localdeps.postgresName" $) "port" $.Values.postgres.service.port "enabled" $.Values.postgres.enabled)
+      (dict "component" "redis"    "name" (include "localdeps.redisName" $)    "port" $.Values.redis.service.port    "enabled" $.Values.redis.enabled)
+   ) }}
+{{- if $c.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $c.name }}
+  labels:
+    {{- include "localdeps.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $c.component }}
+  annotations:
+    checkov.io/skip1: CKV_K8S_21=helm template khong truyen -n nen render ra namespace default; cai dat that luon co -n insighthub-local - xem SPEC.md muc 13
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "localdeps.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $c.component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            {{- toYaml $.Values.networkPolicy.appPodSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ $c.port }}
+{{- end }}
+{{- end }}
+{{- end }}

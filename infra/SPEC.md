@@ -469,6 +469,37 @@ hoặc bastion host trong public subnet, rồi tắt hẳn `endpoint_public_acce
 — đây là thay đổi kiến trúc lớn hơn phạm vi policy-gate hiện tại, cần quyết
 định riêng nếu muốn triển khai.
 
+### 10b. Helm/Kubernetes — finding từ `infra/helm/` (2026-09-28)
+
+Đặt 2 Helm chart trong `infra/` khiến `checkov -d infra/` bật thêm 2
+framework `helm` + `kubernetes` (trước đó chỉ có `terraform`). Lần quét đầu
+ra **41 finding** — 11 ở `insighthub-local-deps`, 30 ở `insighthub` (chart
+app chỉ lộ ra sau khi sửa được lỗi render, xem Mục 13).
+
+**✅ Sửa thật bằng code — không phải accepted risk:**
+
+| Check ID | Số | Cách sửa |
+|---|---|---|
+| CKV_K8S_38 | 6 | `automountServiceAccountToken: false` trên cả 6 pod spec (web/api/worker/migration + postgres/redis). IRSA gắn projected token riêng qua EKS pod identity webhook, Secrets Store CSI tự xin token qua `CSIDriver.tokenRequests` → không phụ thuộc token automount mặc định. **Phải kiểm lại trên EKS ở MH10**: nếu pod api/worker không lấy được credential IRSA hoặc CSI không mount được secret thì quay lại `#checkov:skip`. |
+| CKV2_K8S_6 | 2 | `NetworkPolicy` thật cho Postgres/Redis (`insighthub-local-deps/templates/networkpolicy.yaml`): chỉ pod mang `app.kubernetes.io/name: insighthub` (pod của chart app) trong **cùng namespace** được vào 5432/6379. Chỉ khai `policyTypes: [Ingress]` — để egress mở nên DNS vẫn chạy. kind (kindnet/kube-network-policies) **có** thực thi NetworkPolicy nên đây là ràng buộc thật, không phải khai báo suông. |
+| CKV_K8S_15 | 3 | `values.yaml` đổi mặc định `pullPolicy: Always` (an toàn cho môi trường chưa biết). Hai môi trường thật đều ghi đè `IfNotPresent` vì tag bất biến: local nạp image bằng `kind load` (không có registry để pull), dev dùng ECR `image_tag_mutability = IMMUTABLE`. |
+
+**Accepted risk — `checkov.io/skip<n>` gắn tại annotation của từng resource
+trong template** (cùng nguyên tắc với `#checkov:skip` bên Terraform: không
+`--skip-check` toàn cục, không `--soft-fail`):
+
+| Check ID | Số | Resource | Lý do chấp nhận |
+|---|---|---|---|
+| CKV_K8S_21 | 16 | mọi resource của cả 2 chart | **Dương tính giả.** Checkov gọi `helm template` không kèm `-n` nên Helm render ra namespace `default`. Cài đặt thật luôn có `-n insighthub-local` (kind) hoặc `-n insighthub-dev` (EKS, namespace do Terraform root platform tạo). Không có giá trị namespace nào nằm trong chart để sửa. |
+| CKV_K8S_40 | 6 | 3 Deployment app + Job migration + 2 StatefulSet | UID nướng sẵn trong image: app `1001` (`appuser`/`nextjs`), `pgvector/pgvector` và `redis` official dùng `999`. Chạy UID ≥ 10000 phải build lại image và `chown` lại filesystem — ngoài phạm vi Day 3. Rủi ro thật (trùng UID với user trên host) thấp vì node là EC2 chuyên dụng của node group. |
+| CKV_K8S_43 | 3 | Deployment web/api/worker | Local nạp image bằng `kind load docker-image` nên **không có digest** để tham chiếu. Trên dev, pipeline truyền `--set image.<svc>.digest` lấy từ digest ECR sau khi push (Mục 12) — chart đã hỗ trợ sẵn qua `image.<svc>.digest`. Tag hiện tại là git short SHA trên repo `IMMUTABLE` nên vẫn bất biến. |
+| CKV_K8S_35 | 3 | Deployment api/worker + Job migration | App đọc `DATABASE_URL`/`REDIS_URL` từ biến môi trường (`api/app/core/config.py`). Chuyển sang secret dạng file phải sửa code app ở cả 3 service — ngoài phạm vi Day 3. Secret vẫn đến từ K8s Secret qua `secretKeyRef`, không hardcode trong manifest. |
+| CKV2_K8S_6 | 4 | 4 pod của chart app | **Giới hạn đã biết**: trên EKS, VPC CNI **chưa bật network policy agent** nên `NetworkPolicy` không được thực thi. Thêm policy không enforce là cảm giác an toàn giả, lại dễ chặn nhầm traffic ALB `target-type: ip` (ALB gọi thẳng pod IP, không qua Service). Nếu bật `enableNetworkPolicy` cho VPC CNI thì mở lại mục này. |
+
+Kết quả sau khi xử lý — `checkov -d infra/`:
+**687 passed, 0 failed, 54 skipped, exit code 0**
+(`terraform` 164/0/24 · `helm` 510/0/30 · `kubernetes` 13/0/0).
+
 ## 11. Policy-as-code — Conftest (`infra/policy/terraform/`)
 
 Policy gate chạy trên **plan JSON thật** (`terraform show -json tfplan`), bổ
@@ -645,3 +676,124 @@ Ràng buộc liên quan: EKS chỉ cho 1 update cluster config chạy tại mộ
 điểm — bước 3/6 phải chờ `Successful` trước khi làm việc khác đụng cluster
 config; job apply dùng `concurrency` group để 2 run không chồng nhau.
 
+**Job `security-scan` — bắt buộc quét thêm bản render dev.** `checkov -d infra/`
+chỉ render chart bằng **values mặc định**, mà mặc định có `ingress.enabled: false`
+và `secretsStore.enabled: false` → **`Ingress` và `SecretProviderClass` không
+bao giờ được quét**. Đây là lỗ hổng phạm vi không vá được bằng placeholder
+(Checkov không nhận `--values` theo từng chart — xem Mục 13). Job phải làm
+thêm một bước riêng:
+
+```bash
+helm template insighthub infra/helm/insighthub \
+  -f infra/helm/insighthub/values-dev.yaml \
+  --set image.api.tag=ci --set image.web.tag=ci --set image.worker.tag=ci \
+  --set-file migration.initSql=infra/db/init.sql \
+  > "$RUNNER_TEMP/render-dev/manifests.yaml"
+checkov -d "$RUNNER_TEMP/render-dev" --framework kubernetes   # exit phải = 0
+```
+
+`values-dev.yaml` đã chứa sẵn ARN/cert giả (account `000000000000`,
+`certificate/0000…`) đủ để qua guard mà không lộ giá trị thật. Bước này chạy
+trên thư mục render tạm, **không** commit manifest vào repo (giữ nguyên tắc
+một nguồn duy nhất là chart).
+
+**Deploy dev truyền digest, không truyền tag.** Sau khi push image lên ECR,
+job lấy digest rồi truyền vào Helm — đóng CKV_K8S_43 ở môi trường thật
+(Mục 10b) và loại bỏ hoàn toàn khả năng tag trỏ sai image:
+
+```bash
+DIGEST=$(aws ecr describe-images --repository-name insighthub/api \
+  --image-ids imageTag="$GIT_SHA" --query 'imageDetails[0].imageDigest' --output text)
+helm upgrade --install insighthub infra/helm/insighthub ... \
+  --set image.api.tag="$GIT_SHA" --set image.api.digest="$DIGEST"
+```
+
+(Chart ghép thành `repo:tag@digest` — digest thắng khi có cả hai, xem
+`insighthub.image` trong `_helpers.tpl`.)
+
+
+## 13. Helm charts (`infra/helm/`) — bố cục và cơ chế placeholder
+
+### Hai chart, tách theo ranh giới môi trường
+
+| Chart | Nội dung | Dùng ở đâu |
+|---|---|---|
+| `insighthub` | web/api/worker Deployment + Service + HPA + Ingress (ALB) + SecretProviderClass + migration Job | **Cả hai** — kind (`values-local.yaml`) và EKS (`values-dev.yaml`) |
+| `insighthub-local-deps` | Postgres (pgvector) + Redis + Secret kết nối + NetworkPolicy | **Chỉ kind** |
+
+Tách làm 2 chart để ràng buộc "values AWS KHÔNG được có StatefulSet"
+(DAY3-CHECKLIST N.10/O.12) là **bất biến theo cấu trúc**, không phụ thuộc
+người cài có nhớ truyền đúng values hay không: chart app không chứa
+template StatefulSet nào, nên không có đường nào cài nhầm datastore lên EKS.
+
+### Vì sao values mặc định là placeholder
+
+Checkov quét chart bằng cách gọi `helm template <chart>` (`checkov/helm/runner.py:349`).
+Nó **không truyền được values theo từng chart**:
+
+- Cờ `--var-file` có tồn tại và được chuyển thành `helm template --values`,
+  nhưng đường dẫn giải theo **cwd của tiến trình checkov**. `checkov -d infra/`
+  chạy từ repo root (cwd = repo root) còn `scripts/verify.py:525-529` copy
+  `infra/` ra scratch rồi chạy `checkov -d .` với **cwd = scratch/infra** —
+  không có đường dẫn tương đối nào đúng cho cả hai.
+- Cùng file đó còn bị runner `terraform` nhận nhầm là tfvars →
+  `Parsing errors: 1`.
+
+Trước khi sửa, hai `fail` guard trong chart làm `helm template` với values
+mặc định lỗi ngay, checkov chỉ in `[WARNI] Failed processing helm chart` rồi
+**bỏ qua toàn bộ chart app** — 30 finding không bao giờ lộ ra, mà exit code
+vẫn 0 nên không ai biết.
+
+Cách xử lý: values mặc định mang **placeholder hợp lệ về cú pháp** để render
+được, còn guard được gắn điều kiện ngữ cảnh.
+
+| Values | Placeholder | Hằng số đối chiếu trong `_helpers.tpl` |
+|---|---|---|
+| `image.<svc>.tag` | `0.0.0-placeholder` | `insighthub.imageTagPlaceholder` |
+| `migration.initSql` | dòng bắt đầu bằng `-- PLACEHOLDER` | `insighthub.initSqlPlaceholderPrefix` |
+
+⚠️ Hai chuỗi này phải khớp từng ký tự giữa `values.yaml` và `_helpers.tpl` —
+đổi một bên mà quên bên kia thì guard mất tác dụng và placeholder lọt ra
+deploy thật.
+
+### Phân biệt render tĩnh với deploy thật — `insighthub.isTemplateRender`
+
+`helm template <chart>` không truyền tên release → Helm điền tên mặc định
+`release-name`. Deploy thật luôn có tên (`helm install insighthub`,
+`helm upgrade insighthub`). Guard chỉ `fail` khi tên **khác** `release-name`.
+
+Đã thử và loại các cách khác:
+
+- `.Capabilities.APIVersions` — **không dùng được từ Helm 3.22**: render
+  offline đã điền đầy đủ version set (đo thật: `apiextensions.k8s.io/v1`,
+  `batch/v1`, `autoscaling/v2` đều `true`), giống hệt khi có cluster.
+- `.Capabilities.KubeVersion` — offline trả `v1.37.0` (bản compiled sẵn của
+  Helm), trùng được với version cluster thật → không phân biệt được.
+- `.Release.IsInstall` — `true` ở **cả hai** ngữ cảnh.
+
+**Giới hạn đã biết**: `helm install release-name ./chart` sẽ lách được guard.
+Chấp nhận — tên đó không dùng ở local lẫn CI.
+
+### Ma trận kiểm chứng guard (chạy lại khi sửa `_helpers.tpl`)
+
+| # | Lệnh | Kỳ vọng |
+|---|---|---|
+| 1 | `helm template infra/helm/insighthub` | render OK (đây là cách checkov gọi) |
+| 2 | `helm install insighthub … --dry-run` thiếu tag | FAIL — `image cho component worker vẫn là tag placeholder` |
+| 3 | `helm install insighthub … --dry-run` có tag, thiếu `initSql` | FAIL — `migration.initSql vẫn là placeholder` |
+| 4 | `helm install insighthub … --dry-run` đủ tag + `--set-file` | OK |
+| 5 | Dùng `image.<svc>.digest` thay tag | OK (digest thắng tag) |
+
+### Phạm vi checkov KHÔNG phủ được
+
+Values mặc định có `ingress.enabled: false` và `secretsStore.enabled: false`
+→ `Ingress` và `SecretProviderClass` không nằm trong bản render mà checkov
+quét. Bù lại bằng bước render dev riêng trong job `security-scan` (Mục 12).
+
+### Đóng gói deterministic
+
+`scripts/package-chart.sh` đóng gói chart app thành archive **byte-for-byte
+giống nhau** qua mỗi lần chạy (`helm package` không deterministic: nhúng
+mtime từng file vào tar và timestamp vào header gzip). Dùng cho source
+binding của pipeline (Mục 12, DAY3-CHECKLIST O.9). Kiểm bằng
+`bash scripts/package-chart.sh --verify` — gói 2 lần, so sha256.

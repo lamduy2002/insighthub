@@ -16,6 +16,10 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "0"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    checkov.io/skip1: CKV_K8S_21=helm template khong truyen -n nen render ra namespace default; cai dat that luon co -n insighthub-<env> - xem SPEC.md muc 13
+    checkov.io/skip2: CKV_K8S_40=UID nuong trong image (app 1001, pgvector 999); doi UID phai build lai image va chown lai filesystem - xem SPEC.md muc 10
+    checkov.io/skip3: CKV_K8S_35=app doc DATABASE_URL/REDIS_URL tu env (api/app/core/config.py); chuyen sang secret dang file phai sua code app - xem SPEC.md muc 10
+    checkov.io/skip4: CKV2_K8S_6=EKS VPC CNI chua bat network policy agent nen NetworkPolicy khong duoc thuc thi; them policy khong enforce la cam giac an toan gia va de chan nham traffic ALB target-type ip - xem SPEC.md muc 10
 spec:
   backoffLimit: {{ .Values.migration.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
@@ -26,6 +30,8 @@ spec:
     spec:
       restartPolicy: Never
       serviceAccountName: {{ include "insighthub.serviceAccountName" . }}
+      # Chi chay psql toi DATABASE_URL, khong goi AWS API (CKV_K8S_38).
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -40,7 +46,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migration
-          image: {{ include "insighthub.image" (dict "img" .Values.migration.image "component" "migration") }}
+          image: {{ include "insighthub.image" (dict "ctx" $ "img" .Values.migration.image "component" "migration") }}
           imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}

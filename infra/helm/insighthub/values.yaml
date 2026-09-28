@@ -6,22 +6,32 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# tag mặc định là PLACEHOLDER, không phải tag deploy được:
+#   - để `helm template`/Checkov render được chart bằng values mặc định
+#     (Checkov không truyền được values — SPEC.md Mục 13);
+#   - deploy thật LUÔN truyền --set image.<svc>.tag=<git short sha>, quên thì
+#     guard "insighthub.image" fail (chuỗi phải khớp
+#     "insighthub.imageTagPlaceholder" trong _helpers.tpl).
+# pullPolicy mặc định Always — an toàn cho môi trường chưa biết (CKV_K8S_15).
+# Cả hai môi trường thật đều ghi đè IfNotPresent vì tag là bất biến:
+#   local → image nạp bằng `kind load`, không có registry để pull;
+#   dev   → ECR image_tag_mutability=IMMUTABLE, tag không thể bị ghi đè.
 image:
   api:
     repository: insighthub/api
-    tag: ""
+    tag: "0.0.0-placeholder"
     digest: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   web:
     repository: insighthub/web
-    tag: ""
+    tag: "0.0.0-placeholder"
     digest: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   worker:
     repository: insighthub/ingestion-worker
-    tag: ""
+    tag: "0.0.0-placeholder"
     digest: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 imagePullSecrets: []
 
 serviceAccount:
@@ -151,8 +161,10 @@ migration:
   # Image chạy bằng user postgres (999), không phải 1001 của app.
   runAsUser: 999
   runAsGroup: 999
-  # Truyền bằng --set-file, KHÔNG copy init.sql vào chart.
-  initSql: ""
+  # Truyền bằng --set-file, KHÔNG copy init.sql vào chart. Giá trị mặc định là
+  # PLACEHOLDER (cùng lý do với image.tag ở trên) — tiền tố phải khớp
+  # "insighthub.initSqlPlaceholderPrefix" trong _helpers.tpl.
+  initSql: "-- PLACEHOLDER: truyen --set-file migration.initSql=infra/db/init.sql\n"
   waitTimeoutSeconds: 60
   backoffLimit: 3
   activeDeadlineSeconds: 300

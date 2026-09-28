@@ -44,14 +44,53 @@ app.kubernetes.io/component: {{ .component }}
 app.kubernetes.io/component: {{ .component }}
 {{- end }}
 
-{{/* Tham chiếu image: repo:tag hoặc repo:tag@digest (digest thắng khi có cả hai). */}}
+{{/*
+"insighthub.isTemplateRender" — phân biệt RENDER TĨNH với DEPLOY THẬT.
+
+Vì sao cần: values.yaml phải render được bằng giá trị mặc định thì Checkov mới
+quét được chart (Checkov gọi `helm template <chart>`, không truyền được values
+— xem SPEC.md Mục 13). Nhưng deploy thật mà quên --set image.*.tag /
+--set-file migration.initSql thì vẫn phải chặn. Hai yêu cầu đó chỉ dung hoà
+được nếu template tự biết mình đang ở ngữ cảnh nào.
+
+Cách phân biệt: `helm template <chart>` KHÔNG truyền tên release → Helm điền
+tên mặc định "release-name". Deploy thật luôn có tên (`helm install insighthub`,
+`helm upgrade insighthub`). Đây là dấu hiệu duy nhất còn dùng được ở Helm 3.22:
+từ bản này `helm template` offline đã điền đầy đủ .Capabilities.APIVersions
+(đo thật: apiextensions.k8s.io/v1, batch/v1, autoscaling/v2 đều "true") nên
+.Capabilities không còn phân biệt được nữa.
+
+Giới hạn đã biết: `helm install release-name ./chart` sẽ lách được guard.
+Chấp nhận — tên đó không dùng ở local lẫn CI.
+*/}}
+{{- define "insighthub.isTemplateRender" -}}
+{{- if eq .Release.Name "release-name" }}true{{ end -}}
+{{- end }}
+
+{{/*
+Giá trị placeholder. PHẢI khớp từng ký tự với values.yaml — đổi ở đây thì đổi
+cả ở đó, nếu không guard sẽ không nhận ra và deploy thật lọt placeholder.
+*/}}
+{{- define "insighthub.imageTagPlaceholder" -}}0.0.0-placeholder{{- end }}
+{{- define "insighthub.initSqlPlaceholderPrefix" -}}-- PLACEHOLDER{{- end }}
+
+{{/*
+Tham chiếu image: repo:tag hoặc repo:tag@digest (digest thắng khi có cả hai).
+Gọi bằng (dict "ctx" $ "img" .Values.image.api "component" "api") — cần "ctx"
+để guard đọc được .Release.Name.
+*/}}
 {{- define "insighthub.image" -}}
 {{- $img := .img -}}
+{{- $ctx := .ctx -}}
+{{- $placeholder := include "insighthub.imageTagPlaceholder" . -}}
 {{- $ref := $img.repository -}}
 {{- if $img.tag }}{{- $ref = printf "%s:%s" $ref ($img.tag | toString) -}}{{- end -}}
 {{- if $img.digest }}{{- $ref = printf "%s@%s" $ref $img.digest -}}{{- end -}}
 {{- if not (or $img.tag $img.digest) }}
 {{- fail (printf "image cho component %s thiếu cả tag lẫn digest — truyền --set image.%s.tag=<git short sha>" .component .component) -}}
+{{- end -}}
+{{- if and (eq ($img.tag | toString) $placeholder) (not $img.digest) (not (include "insighthub.isTemplateRender" $ctx)) -}}
+{{- fail (printf "image cho component %s vẫn là tag placeholder %q — deploy thật phải truyền --set image.%s.tag=<git short sha> hoặc --set image.%s.digest=sha256:..." .component $placeholder .component .component) -}}
 {{- end -}}
 {{- $ref -}}
 {{- end }}
