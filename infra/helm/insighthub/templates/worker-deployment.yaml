@@ -1,0 +1,73 @@
+{{- /*
+Không có Service: worker không mở cổng HTTP (health endpoint là Should-have Day 1
+chưa làm — DAY3-CHECKLIST N.8). Probe dùng exec `arq --check`.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insighthub.fullname" . }}-ingestion-worker
+  labels:
+    {{- include "insighthub.componentLabels" (dict "ctx" . "component" "ingestion-worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "insighthub.componentSelectorLabels" (dict "ctx" . "component" "ingestion-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insighthub.componentSelectorLabels" (dict "ctx" . "component" "ingestion-worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-app.yaml") . | sha256sum }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "insighthub.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ingestion-worker
+          image: {{ include "insighthub.image" (dict "img" .Values.image.worker "component" "worker") }}
+          imagePullPolicy: {{ .Values.image.worker.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "insighthub.configMapName" . }}
+          env:
+            {{- include "insighthub.secretEnv" . | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["arq", "--check", "worker.settings.WorkerSettings"]
+            {{- toYaml .Values.worker.livenessProbe | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["arq", "--check", "worker.settings.WorkerSettings"]
+            {{- toYaml .Values.worker.livenessProbe | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- include "insighthub.csiVolumeMount" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- include "insighthub.csiVolume" . | nindent 8 }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

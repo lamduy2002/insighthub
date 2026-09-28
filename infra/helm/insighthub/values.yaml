@@ -1,0 +1,176 @@
+# Giá trị mặc định TRUNG LẬP: không giả định cloud, không tạo datastore.
+# Dùng kèm values-local.yaml (kind) hoặc values-dev.yaml (EKS).
+# Bắt buộc truyền lúc install/upgrade:
+#   --set-file migration.initSql=infra/db/init.sql   (một nguồn duy nhất — DAY3-CHECKLIST N.6)
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  api:
+    repository: insighthub/api
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  web:
+    repository: insighthub/web
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  worker:
+    repository: insighthub/ingestion-worker
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+serviceAccount:
+  # dev: false — SA `insighthub` do Terraform root platform tạo kèm annotation IRSA (MH6).
+  # local: true — chart tự tạo SA trần.
+  create: false
+  name: insighthub
+  annotations: {}
+
+# Nguồn DATABASE_URL/REDIS_URL. Cùng tên Secret + tên khoá ở CẢ HAI môi trường:
+#   local → Secret do chart insighthub-local-deps tạo
+#   dev   → Secret do Secrets Store CSI sync ra (secretObjects)
+# nhờ đó Deployment api/worker render ra giống hệt nhau.
+secrets:
+  secretName: insighthub-app-secrets
+  databaseUrlKey: database_url
+  redisUrlKey: redis_url
+
+# Secrets Store CSI Driver + AWS provider (ASCP). Chỉ bật ở dev.
+secretsStore:
+  enabled: false
+  provider: aws
+  # ARN lấy từ output core db_secret_arn / redis_secret_arn.
+  dbSecretArn: ""
+  redisSecretArn: ""
+
+# Env không bí mật, dùng chung cho api + worker (envFrom configMapRef).
+# KHÔNG đặt LLM_MODEL/EMBEDDING_MODEL: RAG_MODE=fixture từ chối model override
+# (api/app/core/config.py:71-76).
+config:
+  RAG_MODE: fixture
+  LLM_PROVIDER: fixture
+  EMBEDDING_PROVIDER: fixture
+  EMBEDDING_DIM: "1024"
+  EMBEDDING_REVISION: "1"
+  LLM_MAX_TOKENS: "1024"
+  PROVIDER_TIMEOUT_SECONDS: "60"
+  LOG_LEVEL: INFO
+  ENVIRONMENT: development
+
+podSecurityContext:
+  runAsNonRoot: true
+  # USER trong image là TÊN (appuser/nextjs) → kubelet không xác minh được
+  # runAsNonRoot nếu thiếu UID số (DAY3-CHECKLIST N.7).
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+api:
+  replicaCount: 1
+  service:
+    port: 8000
+    annotations: {}
+  resources:
+    requests:
+      cpu: 150m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+web:
+  replicaCount: 1
+  service:
+    port: 3000
+    annotations: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+worker:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 150m
+      memory: 320Mi
+    limits:
+      cpu: 600m
+      memory: 768Mi
+  # arq mặc định health_check_interval = 3600s → probe kém nhạy, chỉ bắt được
+  # tiến trình chết hẳn (DAY3-CHECKLIST N.8). Period ≥ 60s để không tốn CPU.
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 60
+    timeoutSeconds: 10
+    failureThreshold: 3
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Migration Job — hook pre-install,pre-upgrade. Chạy init.sql TRƯỚC api/worker
+# vì cả hai gọi initialize_database()/check_schema() lúc startup.
+migration:
+  enabled: true
+  image:
+    # Cùng image với docker-compose.yml:5 (có sẵn psql + pgvector).
+    repository: pgvector/pgvector
+    tag: 0.8.2-pg16
+    digest: sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc
+    pullPolicy: IfNotPresent
+  # Image chạy bằng user postgres (999), không phải 1001 của app.
+  runAsUser: 999
+  runAsGroup: 999
+  # Truyền bằng --set-file, KHÔNG copy init.sql vào chart.
+  initSql: ""
+  waitTimeoutSeconds: 60
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+# Ingress ALB — chỉ bật ở dev. Route /healthz /readyz /documents /chat → api,
+# / → web; KHÔNG public /metrics (DAY3-CHECKLIST N.5).
+ingress:
+  enabled: false
+  className: alb
+  host: ""
+  certificateArn: ""
+  # Idle timeout 90s: web proxy chờ api tới 90s (web/app/api/proxy/route.ts:25).
+  idleTimeoutSeconds: 90
+  extraAnnotations: {}

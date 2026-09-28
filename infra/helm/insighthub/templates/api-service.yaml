@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "insighthub.apiServiceName" . }}
+  labels:
+    {{- include "insighthub.componentLabels" (dict "ctx" . "component" "api") | nindent 4 }}
+  {{- with .Values.api.service.annotations }}
+  annotations:
+    {{- /* dev: alb.ingress.kubernetes.io/healthcheck-path=/readyz — health check
+    của target group đặt trên Service, không phải trên Ingress. */ -}}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "insighthub.componentSelectorLabels" (dict "ctx" . "component" "api") | nindent 4 }}

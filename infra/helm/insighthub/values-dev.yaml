@@ -1,0 +1,69 @@
+# DEV (EKS) — namespace insighthub-dev do Terraform root platform tạo (MH3).
+# TUYỆT ĐỐI không có StatefulSet: Postgres = RDS, Redis = ElastiCache.
+#
+# Giá trị ARN/cert/registry dưới đây là GIẢ, chỉ để `helm lint`/`helm template`
+# chạy được ở local. Khi deploy thật phải truyền giá trị từ output core:
+#   --set secretsStore.dbSecretArn=$(terraform -chdir=infra output -raw db_secret_arn)
+#   --set secretsStore.redisSecretArn=$(terraform -chdir=infra output -raw redis_secret_arn)
+#   --set ingress.certificateArn=<ACM ARN> --set ingress.host=<domain>
+#   --set image.<svc>.repository=<ecr url> --set image.<svc>.tag=<git sha>
+
+image:
+  api:
+    repository: 000000000000.dkr.ecr.ap-southeast-1.amazonaws.com/insighthub/api
+    pullPolicy: IfNotPresent
+  web:
+    repository: 000000000000.dkr.ecr.ap-southeast-1.amazonaws.com/insighthub/web
+    pullPolicy: IfNotPresent
+  worker:
+    repository: 000000000000.dkr.ecr.ap-southeast-1.amazonaws.com/insighthub/ingestion-worker
+    pullPolicy: IfNotPresent
+
+# SA `insighthub` (annotation IRSA) do root platform tạo — chart KHÔNG tạo lại.
+serviceAccount:
+  create: false
+  name: insighthub
+
+# Secrets Store CSI + AWS provider (ASCP). Driver phải bật syncSecret.enabled=true
+# vì app chỉ đọc env, không đọc file (DAY3-CHECKLIST N.1).
+secretsStore:
+  enabled: true
+  provider: aws
+  dbSecretArn: arn:aws:secretsmanager:ap-southeast-1:000000000000:secret:insighthub-dev-db-FAKE00
+  redisSecretArn: arn:aws:secretsmanager:ap-southeast-1:000000000000:secret:insighthub-dev-redis-FAKE00
+
+# Health check của target group đặt trên Service (per-target-group), không trên Ingress.
+api:
+  service:
+    annotations:
+      alb.ingress.kubernetes.io/healthcheck-path: /readyz
+      alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+
+web:
+  service:
+    annotations:
+      alb.ingress.kubernetes.io/healthcheck-path: /api/health
+      alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+
+ingress:
+  enabled: true
+  className: alb
+  host: insighthub-dev.example.invalid
+  certificateArn: arn:aws:acm:ap-southeast-1:000000000000:certificate/00000000-0000-0000-0000-000000000000
+  idleTimeoutSeconds: 90
+
+config:
+  RAG_MODE: fixture
+  LLM_PROVIDER: fixture
+  EMBEDDING_PROVIDER: fixture
+  EMBEDDING_DIM: "1024"
+  EMBEDDING_REVISION: "1"
+  LLM_MAX_TOKENS: "1024"
+  PROVIDER_TIMEOUT_SECONDS: "60"
+  LOG_LEVEL: INFO
+  ENVIRONMENT: dev

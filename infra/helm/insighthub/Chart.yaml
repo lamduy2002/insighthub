@@ -1,0 +1,9 @@
+apiVersion: v2
+name: insighthub
+description: InsightHub RAG stack (web, api, ingestion-worker) — dùng chung cho kind (local) và EKS (dev).
+type: application
+# Cố định có chủ đích: chart archive phải giống hệt nhau qua mỗi lần đóng gói
+# (scripts/package-chart.sh --verify → source binding của pipeline, SPEC Mục 12/O.9).
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.29.0-0"

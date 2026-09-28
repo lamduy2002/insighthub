@@ -1,0 +1,20 @@
+{{- if .Values.migration.enabled }}
+{{- /*
+SQL nhận qua --set-file migration.initSql=infra/db/init.sql: MỘT nguồn duy nhất,
+không copy init.sql vào chart (DAY3-CHECKLIST N.6).
+Hook weight -5: tạo sau SecretProviderClass (-10), trước Job (0).
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "insighthub.fullname" . }}-migration-sql
+  labels:
+    {{- include "insighthub.componentLabels" (dict "ctx" . "component" "migration") | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+data:
+  init.sql: |
+{{ .Values.migration.initSql | required "migration.initSql trống — bắt buộc truyền --set-file migration.initSql=infra/db/init.sql" | indent 4 }}
+{{- end }}
