@@ -22,12 +22,6 @@ variable "cost_center" {
   default     = "DO2603"
 }
 
-variable "github_repo" {
-  description = "owner/repo GitHub, dùng cho tài liệu/tra cứu. KHÔNG dùng dựng điều kiện trust — xem github_sub_claim_prefix."
-  type        = string
-  default     = "lamduy2002/insighthub"
-}
-
 variable "github_sub_claim_prefix" {
   description = <<-EOT
     Tiền tố claim `sub` mà GitHub Actions THỰC SỰ phát ra, dùng dựng điều kiện
