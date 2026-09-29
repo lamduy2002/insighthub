@@ -16,17 +16,17 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 | # | Yêu cầu | Trạng thái |
 |---|---|---|
 | MH1 | ServiceMonitor applied | ✅ 3 ServiceMonitor ns `insighthub-local`: `insighthub-api`, `insighthub-redis`, `insighthub-postgres` (`observability/k8s/`) |
-| MH2 | Prometheus quan sát đủ 5 thành phần | ✅ api (`up`=1), postgres (`pg_up`=1), redis (`redis_up`=1, `redis_key_size{arq:queue}`) trực tiếp; worker + web gián tiếp qua cAdvisor + kube-state-metrics (spec §0.4). blackbox-exporter cho web: chưa làm (tùy giờ) |
-| MH3 | Grafana dashboard ≥ 9 panels | ✅ 11 panel, import vào Grafana (uid `insighthub-red`), mọi panel có data qua `/api/ds/query`. File `observability/grafana-dashboards/insighthub-red.json`. Còn thiếu: ảnh chụp màn hình (làm tay) |
+| MH2 | Prometheus quan sát đủ 5 thành phần | ✅ api (`up`=1), postgres (`pg_up`=1), redis (`redis_up`=1, `redis_key_size{arq:queue}`) trực tiếp; web trực tiếp qua blackbox-exporter (`probe_success{job="insighthub-web-probe"}`=1, `Probe` CRD), worker gián tiếp qua cAdvisor + kube-state-metrics (spec §0.4) |
+| MH3 | Grafana dashboard ≥ 9 panels | ✅ 12 panel, import vào Grafana (uid `insighthub-red`), mọi panel có data qua `/api/ds/query`. File `observability/grafana-dashboards/insighthub-red.json`. Còn thiếu: ảnh chụp màn hình (làm tay) |
 | MH4 | Recording rules cho anomaly bands | ✅ `kubectl get prometheusrule -n monitoring insighthub-anomaly`: 17 recording rules (SLI + 3 band × avg/stddev/upper), 20/20 rule health `ok` |
 | MH5 | Alert rules cho 3 anomaly (`promtool check rules`) | ✅ `promtool check rules` SUCCESS (20 rules), `promtool test rules` SUCCESS (5 case, chạy 3 lần đều exit 0). Chưa fire thật (chờ incident) |
-| MH6 | Alertmanager → Slack | ❌ **CẦN USER**: Slack workspace + webhook |
+| MH6 | Alertmanager → Slack | 🔸 cấu hình sẵn + validate (`amtool check-config` SUCCESS, routing test đúng), **chưa apply**: `observability/monitoring/apply-alertmanager-slack.sh`. **CẦN USER**: webhook |
 | MH7 | Incident #1 LLM latency spike + RCA | ❌ (sau baseline ≥1h) |
 | MH8 | Incident #2 queue backlog + RCA | ❌ |
 | MH9 | Incident #3 error burst + RCA | ❌ |
 | MH10 | RCA cite metric + timestamp | ❌ |
 | MH11 | Quiz 5 câu ≥ 4/5 | ❌ **CẦN USER** |
-| MH12 | MLOps overview notes 4 block | ❌ |
+| MH12 | MLOps overview notes 4 block | 🔸 nháp `observability/mlops-overview-notes.md` (người học phải đọc và viết lại bằng lời mình; spec không định nghĩa "4 block", cách chia ghi ở đầu file) |
 
 ## B. Non-functional (§8.3, dòng 977-982)
 
@@ -44,7 +44,7 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 |---|---|---|
 | 1 | `kubectl get servicemonitor -n insighthub` → exists | ✅ ns thực tế `insighthub-local` (kind), 3 ServiceMonitor; ghi rõ trong evidence |
 | 2 | `/api/v1/targets` mọi target UP, đủ 5 thành phần | ✅ 3 target app + 15 target stack UP; worker/web gián tiếp |
-| 3 | Dashboard 9+ panels, no "No data" | ✅ 11 panel, 0 panel No data (đã kiểm qua Grafana API) |
+| 3 | Dashboard 9+ panels, no "No data" | ✅ 12 panel, 0 panel No data (đã kiểm qua Grafana API) |
 | 4 | `kubectl get prometheusrule -n monitoring -o yaml` → rules | ✅ |
 | 5 | `promtool check rules anomaly-rules.yaml` → SUCCESS | ✅ (file: `observability/prometheus-rules/anomaly-rules.yaml`) |
 | 6 | Test alert → Slack `#alerts` | ❌ cần webhook |
@@ -120,3 +120,8 @@ promtool 5' · exporter+SM 30' · chaos scripts 40' · rules+unit tests 60' · d
 - **Port-forward**: `scripts/chaos/api-forward.sh` tự nối lại; cần chạy nền cho load baseline và chaos #1 (restart pod api).
 - `evidence/chaos-*-window.json` ghi cửa sổ started_at / fault_removed_at / ended_at để viết RCA.
 - Test alert dùng `$value` trong annotation ⇒ đặt alert cùng group với recording rule (khác group thì giá trị dao động 39↔42 giữa các lần chạy vì group chạy song song).
+- **Label route**: label `endpoint` của app bị trùng với `endpoint="http"` của ServiceMonitor nên Prometheus đổi thành **`exported_endpoint`** (`/chat`, `/documents`, ...). Dùng `exported_endpoint` trong query/RCA/harvest. Đã sửa panel 1 và unit test.
+- **MCP cho RCA (§8.1)**: `~/.kube/insighthub-mcp-readonly.kubeconfig` trước đó trỏ minikube đã chết (127.0.0.1:32771). Đã tạo lại cho kind: ServiceAccount `mcp-readonly` (Role chỉ ns `insighthub-local`, không secrets, không write; token 72h, hết hạn ~2026-10-02 — tạo lại bằng `kubectl -n insighthub-local create token mcp-readonly --duration=72h`). Bản cũ lưu ở `~/.kube/insighthub-mcp-readonly.kubeconfig.minikube.bak`. Kiểm bằng gọi thật: Prometheus MCP trả `insighthub_http_requests_total`, Kubernetes MCP liệt kê pod ns `insighthub-local`; `auth can-i` xác nhận delete/create/patch/secrets đều `no`.
+- **Alertmanager → Slack**: webhook đọc từ Secret `monitoring/alertmanager-slack` qua `slack_api_url_file`, không nằm trong git. Chỉ alert `InsightHub*` đi Slack; alert mặc định của stack vào receiver `null`.
+- **Tiện ích**: `scripts/chaos/harvest-samples.py` lấy sample nguyên từ Prometheus (đã đối chiếu với đúng logic `verify.py:615-633`: 4/4 chấp nhận); `observability/rca-prompt.md` là prompt evidence-first.
+- Mật khẩu admin Grafana lab (`insighthub`) đang nằm trong `observability/monitoring/kube-prometheus-stack.values.yaml`; chỉ dùng cho kind local qua port-forward 127.0.0.1, nên đổi sang existingSecret nếu repo public.

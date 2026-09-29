@@ -8,7 +8,7 @@ tests:
   # ---- Recording rules: exact values ----
   - interval: 30s
     input_series:
-      - series: 'insighthub_http_requests_total{method="GET",endpoint="/documents",status="200"}'
+      - series: 'insighthub_http_requests_total{method="GET",exported_endpoint="/documents",status="200"}'
         values: '0+30x100'
       - series: 'insighthub_embedding_estimated_tokens_total{provider="fixture",input_type="document"}'
         values: '0+3000x100'
@@ -35,9 +35,9 @@ tests:
     input_series:
       - series: 'up{job="insighthub-api"}'
         values: '1x200'
-      - series: 'insighthub_http_requests_total{method="GET",endpoint="/documents",status="200"}'
+      - series: 'insighthub_http_requests_total{method="GET",exported_endpoint="/documents",status="200"}'
         values: '0+20x190'
-      - series: 'insighthub_http_requests_total{method="POST",endpoint="/documents",status="500"}'
+      - series: 'insighthub_http_requests_total{method="POST",exported_endpoint="/documents",status="500"}'
         values: '0x129 0+10x61'
     alert_rule_test:
       - eval_time: 60m
@@ -104,9 +104,9 @@ tests:
     input_series:
       - series: 'up{job="insighthub-api"}'
         values: '1x60'
-      - series: 'insighthub_http_requests_total{method="GET",endpoint="/documents",status="200"}'
+      - series: 'insighthub_http_requests_total{method="GET",exported_endpoint="/documents",status="200"}'
         values: '0+20x190'
-      - series: 'insighthub_http_requests_total{method="POST",endpoint="/documents",status="500"}'
+      - series: 'insighthub_http_requests_total{method="POST",exported_endpoint="/documents",status="500"}'
         values: '0x89 0+10x101'
     alert_rule_test:
       - eval_time: 50m

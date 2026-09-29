@@ -48,7 +48,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "1. Rate - HTTP requests/s by route (RED)",
-      "description": "Requests per second by route template; source insighthub_http_requests_total.",
+      "description": "Requests per second by route template (label exported_endpoint: the app's own endpoint label collides with the scrape target label endpoint=http); source insighthub_http_requests_total.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -597,7 +597,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "Component health - 5 components",
-      "description": "api/redis-exporter/postgres-exporter scrape health via up; web and ingestion-worker via available replicas (no own /metrics endpoint, spec 0.4).",
+      "description": "api/redis-exporter/postgres-exporter scrape health via up; web via blackbox probe; ingestion-worker via available replicas (no own /metrics endpoint, spec 0.4).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -625,9 +625,20 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "kube_deployment_status_replicas_available{namespace=\"insighthub-local\",deployment=~\"insighthub-(web|ingestion-worker)\"}",
+          "expr": "kube_deployment_status_replicas_available{namespace=\"insighthub-local\",deployment=~\"insighthub-ingestion-worker\"}",
           "legendFormat": "replicas {{deployment}}",
           "refId": "B",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_success{job=\"insighthub-web-probe\"}",
+          "legendFormat": "web probe_success",
+          "refId": "C",
           "editorMode": "code",
           "range": true
         }
@@ -640,6 +651,66 @@
             "fillOpacity": 8
           },
           "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Web probe - success and duration (blackbox)",
+      "description": "Direct web signal: blackbox-exporter GET /api/health on insighthub-web (probe_success 1/0, probe_duration_seconds).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_success{job=\"insighthub-web-probe\"}",
+          "legendFormat": "probe_success",
+          "refId": "A",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_duration_seconds{job=\"insighthub-web-probe\"}",
+          "legendFormat": "probe_duration_seconds",
+          "refId": "B",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8
+          },
+          "decimals": 3
         },
         "overrides": []
       },

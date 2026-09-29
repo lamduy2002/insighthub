@@ -1,0 +1,35 @@
+# Day 4 MH6: Alertmanager -> Slack #alerts. Overlay on kube-prometheus-stack.values.yaml.
+#
+# The webhook is NOT in git. It lives in the K8s Secret `alertmanager-slack` (key
+# `webhook_url`, created by apply-alertmanager-slack.sh) and is mounted as a file, which
+# Alertmanager reads through slack_api_url_file.
+#
+# No Go-template braces on purpose: the chart runs this config through Helm `tpl`, so `{{ }}`
+# would be evaluated by Helm. Slack title/text therefore use Alertmanager's defaults, which
+# already include alertname, severity and the summary/description annotations of our rules.
+alertmanager:
+  alertmanagerSpec:
+    secrets:
+      - alertmanager-slack
+  config:
+    global:
+      resolve_timeout: 5m
+      slack_api_url_file: /etc/alertmanager/secrets/alertmanager-slack/webhook_url
+    route:
+      receiver: "null"
+      group_by: [alertname, incident]
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 4h
+      routes:
+        # Only InsightHub anomaly alerts (and the manual test alert) go to Slack; the stack's
+        # own default alerts stay silent to keep #alerts readable.
+        - receiver: slack-alerts
+          matchers:
+            - alertname =~ "InsightHub.*"
+    receivers:
+      - name: "null"
+      - name: slack-alerts
+        slack_configs:
+          - channel: "#alerts"
+            send_resolved: true

@@ -1,0 +1,106 @@
+# Day 4 MH2: direct signal for the web component (Next.js has no /metrics).
+# blackbox-exporter probes http://insighthub-web:3000/api/health -> probe_success,
+# probe_duration_seconds. Only the web target is probed; the default http_2xx module is used.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insighthub-blackbox-exporter
+  namespace: insighthub-local
+  labels: &bb-labels
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: blackbox-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels: *bb-labels
+  template:
+    metadata:
+      labels: *bb-labels
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: blackbox-exporter
+          image: quay.io/prometheus/blackbox-exporter:v0.27.0
+          args:
+            - --config.file=/etc/blackbox/config.yml
+          ports:
+            - name: http
+              containerPort: 9115
+          readinessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/blackbox
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 48Mi}
+      volumes:
+        - name: config
+          configMap:
+            name: insighthub-blackbox-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: insighthub-blackbox-config
+  namespace: insighthub-local
+data:
+  config.yml: |
+    modules:
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          method: GET
+          valid_status_codes: []   # any 2xx
+          follow_redirects: false
+          preferred_ip_protocol: ip4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: insighthub-blackbox-exporter
+  namespace: insighthub-local
+  labels:
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: blackbox-exporter
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 9115
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: blackbox-exporter
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: insighthub-web
+  namespace: insighthub-local
+  labels:
+    release: kube-prom-stack
+spec:
+  jobName: insighthub-web-probe
+  interval: 30s
+  scrapeTimeout: 10s
+  module: http_2xx
+  prober:
+    url: insighthub-blackbox-exporter.insighthub-local.svc:9115
+  targets:
+    staticConfig:
+      static:
+        - http://insighthub-web.insighthub-local.svc:3000/api/health

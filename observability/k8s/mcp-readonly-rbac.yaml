@@ -1,0 +1,66 @@
+# Read-only identity for the Kubernetes MCP server used by AI RCA (spec 8.1).
+# Namespaced Role on insighthub-local only; NO secrets, NO write verbs. The cluster-level
+# rule is limited to listing namespaces/nodes, which the MCP server needs for discovery.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-readonly
+  namespace: insighthub-local
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-readonly
+  namespace: insighthub-local
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, events, services, endpoints, configmaps, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-readonly
+  namespace: insighthub-local
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-readonly
+subjects:
+  - kind: ServiceAccount
+    name: mcp-readonly
+    namespace: insighthub-local
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: insighthub-mcp-readonly-discovery
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, nodes]
+    verbs: [get, list]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: insighthub-mcp-readonly-discovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: insighthub-mcp-readonly-discovery
+subjects:
+  - kind: ServiceAccount
+    name: mcp-readonly
+    namespace: insighthub-local
