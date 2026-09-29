@@ -1,0 +1,353 @@
+# Day 3 — IaC pipeline. Thiết kế đầy đủ ở infra/SPEC.md Mục 12.
+#
+# Nguyên tắc bảo mật của file này:
+#   - permissions mặc định `contents: read`; `id-token: write` CHỈ cấp ở job
+#     thực sự assume role AWS (plan/apply) — không cấp ở cấp workflow.
+#   - Job dùng cloud identity có guard `github.event.pull_request.head.repo...`
+#     nên PR từ fork chạy được 4 job tĩnh nhưng KHÔNG bao giờ chạm AWS.
+#   - Saved plan KHÔNG upload làm artifact GitHub (repo public, ai cũng tải
+#     được); plan chứa giá trị nhạy cảm dạng plaintext → đẩy lên S3 SSE-KMS.
+#   - Mọi action pin theo commit SHA, không theo tag.
+name: iac
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Không cancel-in-progress: job apply đang đụng cluster config thì cancel
+  # giữa chừng để lại endpoint mở thêm IP runner (SPEC Mục 12 bước 6).
+  group: iac-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.16.3"
+  TFLINT_VERSION: "v0.59.1"
+  CHECKOV_VERSION: "3.3.19"
+  CONFTEST_VERSION: "0.70.0"
+  HELM_VERSION: "v3.22.0"
+  AWS_REGION: ap-southeast-1
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  # ---------------------------------------------------------------- MH8 #1
+  fmt:
+    name: fmt
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive -diff
+
+  # ---------------------------------------------------------------- MH8 #2
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      # validate trước lint: lint không bắt được lỗi cú pháp/tham chiếu.
+      # -backend=false để không cần credential AWS ở job này.
+      - name: terraform validate (3 root)
+        run: |
+          set -euo pipefail
+          for d in infra infra/platform infra/bootstrap/github-oidc; do
+            terraform -chdir="$d" init -backend=false -no-color
+            terraform -chdir="$d" validate -no-color
+          done
+      - uses: terraform-linters/setup-tflint@1cf010d3c7aef302051ccdb68c14c5dc2efa34ef # v6.3.1
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+      - name: tflint --recursive
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          tflint --init
+          tflint --recursive --no-color
+
+  # ---------------------------------------------------------------- MH8 #3
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - run: pip install "checkov==${CHECKOV_VERSION}"
+      # Checkov tự gọi `helm template` để quét chart nên cần helm trên PATH.
+      - name: Install helm
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+          tar -xzf /tmp/helm.tgz -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+      - name: checkov -d infra/
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/checkov"
+          checkov -d infra/ --compact
+          checkov -d infra/ --quiet --output junitxml --output-file-path "$RUNNER_TEMP/checkov"
+      # SPEC Mục 12: values mặc định có ingress.enabled=false và
+      # secretsStore.enabled=false → Ingress/SecretProviderClass KHÔNG nằm
+      # trong bản render mà checkov quét. Bù bằng bước render dev riêng.
+      - name: checkov trên bản render dev (Ingress + SecretProviderClass)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/render-dev"
+          helm template insighthub infra/helm/insighthub \
+            -f infra/helm/insighthub/values-dev.yaml \
+            --set image.api.tag=ci --set image.web.tag=ci --set image.worker.tag=ci \
+            --set-file migration.initSql=infra/db/init.sql \
+            > "$RUNNER_TEMP/render-dev/manifests.yaml"
+          checkov -d "$RUNNER_TEMP/render-dev" --framework kubernetes --compact
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: checkov-report
+          path: ${{ runner.temp }}/checkov
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- MH8 #4
+  policy-check:
+    name: policy-check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install conftest ${{ env.CONFTEST_VERSION }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}"
+          curl -fsSL "$base/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" -o /tmp/conftest.tgz
+          curl -fsSL "$base/checksums.txt" -o /tmp/conftest.sums
+          echo "$(grep "conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" /tmp/conftest.sums | cut -d' ' -f1)  /tmp/conftest.tgz" | sha256sum -c -
+          tar -xzf /tmp/conftest.tgz -C /tmp conftest
+          sudo install -m 0755 /tmp/conftest /usr/local/bin/conftest
+          conftest --version
+      # Verifier chạy pytest bằng sys.executable → phải là Python của venv đã
+      # cài đúng dependency pin hash (DAY3-CHECKLIST mục K).
+      - name: Venv verifier (--require-hashes)
+        run: |
+          set -euo pipefail
+          python -m venv venv
+          venv/bin/python -m pip install --upgrade pip
+          venv/bin/python -m pip install --require-hashes -r scripts/requirements-verification.txt
+      - name: conftest verify (unit test của Rego)
+        working-directory: infra
+        run: conftest verify --policy policy/terraform
+      - name: pytest tests/milestones/day3
+        env:
+          INSIGHTHUB_REPO_ROOT: ${{ github.workspace }}
+        run: venv/bin/python -m pytest tests/milestones/day3 -q
+
+  # ---------------------------------------------------------------- MH8 #5
+  plan:
+    name: plan
+    needs: [fmt, lint, security-scan, policy-check]
+    # PR từ fork không có cloud identity (SPEC Mục 12 / DAY3-CHECKLIST O.10).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    environment: infra-plan
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      plan_sha256: ${{ steps.save.outputs.plan_sha256 }}
+      plan_s3_uri: ${{ steps.save.outputs.plan_s3_uri }}
+    env:
+      TF_VAR_admin_cidrs: ${{ vars.TF_VAR_ADMIN_CIDRS }}
+      TF_VAR_operator_principal_arns: ${{ vars.TF_VAR_OPERATOR_PRINCIPAL_ARNS }}
+      TF_VAR_db_username: ${{ vars.TF_VAR_DB_USERNAME }}
+      TF_VAR_expires_at: ${{ vars.TF_VAR_EXPIRES_AT }}
+      TF_VAR_ci_apply_role_arn: ${{ vars.AWS_APPLY_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: Install conftest ${{ env.CONFTEST_VERSION }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}"
+          curl -fsSL "$base/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" -o /tmp/conftest.tgz
+          curl -fsSL "$base/checksums.txt" -o /tmp/conftest.sums
+          echo "$(grep "conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" /tmp/conftest.sums | cut -d' ' -f1)  /tmp/conftest.tgz" | sha256sum -c -
+          tar -xzf /tmp/conftest.tgz -C /tmp conftest
+          sudo install -m 0755 /tmp/conftest /usr/local/bin/conftest
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      # CHỈ plan root core. Root platform cần EKS endpoint sống và IP runner
+      # nằm trong public_access_cidrs — việc mở tạm endpoint chỉ làm ở job
+      # apply (SPEC Mục 12 bước 3), nên platform không plan được trên PR.
+      - name: terraform init + plan (core)
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra init -no-color
+          terraform -chdir=infra plan -no-color -out="$RUNNER_TEMP/core.tfplan"
+          terraform -chdir=infra show -json "$RUNNER_TEMP/core.tfplan" > "$RUNNER_TEMP/core.tfplan.json"
+      - name: conftest test trên plan JSON
+        working-directory: infra
+        run: conftest test --policy policy/terraform "$RUNNER_TEMP/core.tfplan.json"
+      # Saved plan chứa giá trị nhạy cảm plaintext (password sinh bởi
+      # random_password) → S3 SSE-KMS, KHÔNG phải GitHub artifact.
+      - name: Upload saved plan lên S3 (SSE-KMS)
+        id: save
+        run: |
+          set -euo pipefail
+          sha=$(sha256sum "$RUNNER_TEMP/core.tfplan" | cut -d' ' -f1)
+          uri="s3://${{ vars.TF_STATE_BUCKET }}/plans/${{ github.run_id }}/core.tfplan"
+          aws s3 cp "$RUNNER_TEMP/core.tfplan" "$uri" \
+            --sse aws:kms --sse-kms-key-id "${{ vars.TFPLAN_KMS_KEY_ARN }}"
+          echo "plan_sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "plan_s3_uri=$uri" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Saved plan::$uri sha256=$sha"
+
+  # ---------------------------------------------------------------- MH8 #6
+  cost-estimate:
+    name: cost-estimate
+    needs: [fmt, lint]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: Install infracost
+        run: curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+      # Thiếu INFRACOST_API_KEY thì bước này vàng chứ không chặn pipeline —
+      # dự toán chi phí là NFR, không phải cổng chặn merge.
+      - name: infracost breakdown
+        id: breakdown
+        continue-on-error: true
+        env:
+          INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${INFRACOST_API_KEY:-}" || { echo "Thiếu secret INFRACOST_API_KEY — bỏ qua"; exit 1; }
+          infracost breakdown --path infra/ --format json --out-file "$RUNNER_TEMP/infracost.json"
+          infracost output --path "$RUNNER_TEMP/infracost.json" --format table
+      - name: Comment PR
+        if: github.event_name == 'pull_request' && steps.breakdown.outcome == 'success'
+        continue-on-error: true
+        env:
+          INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          infracost comment github --path "$RUNNER_TEMP/infracost.json" \
+            --repo "$GITHUB_REPOSITORY" --pull-request "${{ github.event.pull_request.number }}" \
+            --github-token "$GITHUB_TOKEN" --behavior update
+
+  # ---------------------------------------------------------------- MH8 #7
+  apply:
+    name: apply
+    needs: [plan]
+    # Không bao giờ apply từ PR — chỉ push main hoặc workflow_dispatch.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_admin_cidrs: ${{ vars.TF_VAR_ADMIN_CIDRS }}
+      TF_VAR_operator_principal_arns: ${{ vars.TF_VAR_OPERATOR_PRINCIPAL_ARNS }}
+      TF_VAR_db_username: ${{ vars.TF_VAR_DB_USERNAME }}
+      TF_VAR_expires_at: ${{ vars.TF_VAR_EXPIRES_AT }}
+      TF_VAR_ci_apply_role_arn: ${{ vars.AWS_APPLY_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      # Apply ĐÚNG file plan đã được review ở job plan: tải về, so sha256 với
+      # giá trị job plan công bố. Lệch → dừng, không apply.
+      - name: Tải saved plan và verify sha256
+        run: |
+          set -euo pipefail
+          aws s3 cp "${{ needs.plan.outputs.plan_s3_uri }}" "$RUNNER_TEMP/core.tfplan"
+          echo "${{ needs.plan.outputs.plan_sha256 }}  $RUNNER_TEMP/core.tfplan" | sha256sum -c -
+      - name: terraform apply (core, đúng saved plan)
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra init -no-color
+          terraform -chdir=infra apply -no-color "$RUNNER_TEMP/core.tfplan"
+      - name: Xóa saved plan khỏi S3
+        if: always()
+        run: aws s3 rm "${{ needs.plan.outputs.plan_s3_uri }}" || true
+      - name: Fresh plan phải không có thay đổi (deterministic)
+        run: terraform -chdir=infra plan -no-color -detailed-exitcode
+
+  # ------------------------------------------------- Source binding (verifier)
+  # Chạy ở MỌI trigger, không cần cloud identity. Sinh đúng 2 giá trị mà
+  # scripts/verify.py sẽ so khớp lúc chấm (DAY3-CHECKLIST mục E.4, K).
+  verification-source:
+    name: verification-source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      # Chart archive deterministic (helm package nhúng mtime/timestamp nên
+      # không dùng được) — xem scripts/package-chart.sh.
+      - name: Đóng gói chart (deterministic)
+        run: bash scripts/package-chart.sh --verify
+      - name: Tính source_sha256 + artifact_sha256
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/verification-source"
+          cp evidence/day3-helm/insighthub-0.1.0.tgz "$RUNNER_TEMP/verification-source/"
+          python - <<'PY'
+          import hashlib, importlib.util, json, os, pathlib
+          root = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          spec = importlib.util.spec_from_file_location('verify', root / 'scripts' / 'verify.py')
+          verify = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(verify)
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'verification-source'
+          tgz = out / 'insighthub-0.1.0.tgz'
+          manifest = {
+              'source_sha256': verify.fingerprint(root),
+              'artifact_sha256': hashlib.sha256(tgz.read_bytes()).hexdigest(),
+              'deployment_artifact': 'evidence/day3-helm/insighthub-0.1.0.tgz',
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'commit': os.environ['GITHUB_SHA'],
+          }
+          (out / 'source-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          print(json.dumps(manifest, indent=2))
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # TÊN CHÍNH XÁC: scripts/verify.py:543-546 tìm đúng chuỗi này.
+          name: verification-source
+          path: ${{ runner.temp }}/verification-source
+          if-no-files-found: error
