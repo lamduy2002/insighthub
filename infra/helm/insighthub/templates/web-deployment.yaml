@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insighthub.webServiceName" . }}
+  labels:
+    {{- include "insighthub.componentLabels" (dict "ctx" . "component" "web") | nindent 4 }}
+  annotations:
+    checkov.io/skip1: CKV_K8S_21=helm template khong truyen -n nen render ra namespace default; cai dat that luon co -n insighthub-<env> - xem SPEC.md muc 13
+    checkov.io/skip2: CKV_K8S_40=UID nuong trong image (app 1001, pgvector 999); doi UID phai build lai image va chown lai filesystem - xem SPEC.md muc 10
+    checkov.io/skip3: CKV_K8S_43=local nap image bang kind load nen khong co digest; dev truyen image.<svc>.digest lay tu ECR sau khi push, repo image_tag_mutability IMMUTABLE - xem SPEC.md muc 12
+    checkov.io/skip4: CKV2_K8S_6=EKS VPC CNI chua bat network policy agent nen NetworkPolicy khong duoc thuc thi; them policy khong enforce la cam giac an toan gia va de chan nham traffic ALB target-type ip - xem SPEC.md muc 10
+    checkov.io/skip5: CKV_K8S_15=values-dev dat pullPolicy IfNotPresent co chu dich - deploy that luon truyen image.<svc>.digest (SPEC Muc 12) nen tham chieu la bat bien, keo image moi moi lan restart chi ton thoi gian va quota ECR ma khong doi gi. Values mac dinh van la Always cho moi truong chua biet - xem SPEC.md muc 10b
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "insighthub.componentSelectorLabels" (dict "ctx" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insighthub.componentSelectorLabels" (dict "ctx" . "component" "web") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-web.yaml") . | sha256sum }}
+        {{- with .Values.web.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "insighthub.serviceAccountName" . }}
+      # web khong goi AWS -> khong can SA token (CKV_K8S_38).
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: web
+          image: {{ include "insighthub.image" (dict "ctx" $ "img" .Values.image.web "component" "web") }}
+          imagePullPolicy: {{ .Values.image.web.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          # Không có NEXT_PUBLIC_*: API_INTERNAL_URL đọc runtime server-side,
+          # trang force-dynamic → không cần build lại web (N.5).
+          envFrom:
+            - configMapRef:
+                name: {{ include "insighthub.webConfigMapName" . }}
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            # Next.js standalone ghi cache runtime vào .next/cache.
+            - name: next-cache
+              mountPath: /app/.next/cache
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}
+      {{- with .Values.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

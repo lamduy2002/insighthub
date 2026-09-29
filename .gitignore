@@ -26,6 +26,13 @@ yarn-error.log*
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+infra/tfplan
+infra/*.tfplan
+infra/**/tfplan
+infra/**/*.tfplan
+infra/tfplan.json
+infra/**/tfplan.json
+infra/.infracost/
 
 # --- IDE / OS ---
 .vscode/
@@ -44,3 +51,6 @@ tmp/
 evidence/
 reports/
 *.tsbuildinfo
+
+# --- MCP kubeconfig (chứa token, không commit) ---
+infra/k8s/*.kubeconfig

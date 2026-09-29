@@ -1,0 +1,51 @@
+# LOCAL — cluster kind `insighthub-lab`, namespace insighthub-local.
+# KHÔNG phải AWS: không CSI, không ALB, LLM fixture.
+# Postgres/Redis + Secret `insighthub-app-secrets` + ServiceAccount `insighthub`
+# do chart infra/helm/insighthub-local-deps cài TRƯỚC release này.
+#
+#   helm install insighthub infra/helm/insighthub -n insighthub-local \
+#     --kube-context kind-insighthub-lab -f infra/helm/insighthub/values-local.yaml \
+#     --set image.api.tag=$TAG --set image.web.tag=$TAG --set image.worker.tag=$TAG \
+#     --set-file migration.initSql=infra/db/init.sql --wait
+
+image:
+  api:
+    repository: insighthub/api
+    # tag = git short SHA, truyền lúc install; image nạp bằng `kind load docker-image`
+    # nên IfNotPresent (không có registry để pull).
+    pullPolicy: IfNotPresent
+  web:
+    repository: insighthub/web
+    pullPolicy: IfNotPresent
+  worker:
+    repository: insighthub/ingestion-worker
+    pullPolicy: IfNotPresent
+
+# SA `insighthub` do chart insighthub-local-deps tạo (cài trước release này).
+serviceAccount:
+  create: false
+  name: insighthub
+
+secretsStore:
+  enabled: false
+
+ingress:
+  enabled: false
+
+config:
+  RAG_MODE: fixture
+  LLM_PROVIDER: fixture
+  EMBEDDING_PROVIDER: fixture
+  EMBEDDING_DIM: "1024"
+  EMBEDDING_REVISION: "1"
+  LLM_MAX_TOKENS: "1024"
+  PROVIDER_TIMEOUT_SECONDS: "60"
+  LOG_LEVEL: DEBUG
+  ENVIRONMENT: local
+
+api:
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70

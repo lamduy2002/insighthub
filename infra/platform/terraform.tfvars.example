@@ -1,0 +1,6 @@
+# Root PLATFORM — ví dụ, giá trị mặc định đã đủ cho lab. Copy thành
+# terraform.tfvars (gitignore) nếu cần override.
+aws_region     = "ap-southeast-1"
+project_name   = "insighthub"
+state_bucket   = "do2603-lamduy2002-insighthub-tfstate"
+core_state_key = "insighthub/core/terraform.tfstate"

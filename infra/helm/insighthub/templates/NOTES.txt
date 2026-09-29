@@ -1,0 +1,27 @@
+InsightHub {{ .Chart.AppVersion }} — release {{ .Release.Name }} / namespace {{ .Release.Namespace }}
+
+RAG_MODE={{ .Values.config.RAG_MODE }}  LLM_PROVIDER={{ .Values.config.LLM_PROVIDER }}  EMBEDDING_PROVIDER={{ .Values.config.EMBEDDING_PROVIDER }}
+{{- if eq (.Values.config.RAG_MODE | toString) "fixture" }}
+>> LLM FIXTURE — câu trả lời do fixture sinh, KHÔNG phải provider thật.
+{{- end }}
+{{- if not .Values.secretsStore.enabled }}
+>> MÔI TRƯỜNG LOCAL: DATABASE_URL/REDIS_URL lấy từ Secret "{{ .Values.secrets.secretName }}"
+   (chart insighthub-local-deps, credential GIẢ). Đây KHÔNG phải AWS/EKS.
+{{- end }}
+
+Kiểm tra:
+  kubectl -n {{ .Release.Namespace }} get pods,svc,hpa
+{{- if .Values.ingress.enabled }}
+  kubectl -n {{ .Release.Namespace }} get ingress {{ include "insighthub.fullname" . }}
+{{- else }}
+
+Smoke qua port-forward (không có Ingress ở values-local):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "insighthub.apiServiceName" . }} 8000:{{ .Values.api.service.port }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "insighthub.webServiceName" . }} 3000:{{ .Values.web.service.port }}
+{{- end }}
+
+Hook (SecretProviderClass/Job) KHÔNG bị `helm uninstall` xoá — SPEC.md Mục 8 bước 2:
+  kubectl -n {{ .Release.Namespace }} delete job,secretproviderclass -l app.kubernetes.io/instance={{ .Release.Name }}
+
+ServiceAccount "{{ include "insighthub.serviceAccountName" . }}" KHÔNG thuộc release này
+(local: chart insighthub-local-deps; dev: Terraform root platform) — đừng xoá tay ở đây.

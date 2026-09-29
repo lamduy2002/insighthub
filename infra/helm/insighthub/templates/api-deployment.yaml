@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insighthub.apiServiceName" . }}
+  labels:
+    {{- include "insighthub.componentLabels" (dict "ctx" . "component" "api") | nindent 4 }}
+  annotations:
+    checkov.io/skip1: CKV_K8S_21=helm template khong truyen -n nen render ra namespace default; cai dat that luon co -n insighthub-<env> - xem SPEC.md muc 13
+    checkov.io/skip2: CKV_K8S_40=UID nuong trong image (app 1001, pgvector 999); doi UID phai build lai image va chown lai filesystem - xem SPEC.md muc 10
+    checkov.io/skip3: CKV_K8S_43=local nap image bang kind load nen khong co digest; dev truyen image.<svc>.digest lay tu ECR sau khi push, repo image_tag_mutability IMMUTABLE - xem SPEC.md muc 12
+    checkov.io/skip4: CKV_K8S_35=app doc DATABASE_URL/REDIS_URL tu env (api/app/core/config.py); chuyen sang secret dang file phai sua code app - xem SPEC.md muc 10
+    checkov.io/skip5: CKV2_K8S_6=EKS VPC CNI chua bat network policy agent nen NetworkPolicy khong duoc thuc thi; them policy khong enforce la cam giac an toan gia va de chan nham traffic ALB target-type ip - xem SPEC.md muc 10
+    checkov.io/skip6: CKV_K8S_15=values-dev dat pullPolicy IfNotPresent co chu dich - deploy that luon truyen image.<svc>.digest (SPEC Muc 12) nen tham chieu la bat bien, keo image moi moi lan restart chi ton thoi gian va quota ECR ma khong doi gi. Values mac dinh van la Always cho moi truong chua biet - xem SPEC.md muc 10b
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "insighthub.componentSelectorLabels" (dict "ctx" . "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insighthub.componentSelectorLabels" (dict "ctx" . "component" "api") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-app.yaml") . | sha256sum }}
+        {{- with .Values.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "insighthub.serviceAccountName" . }}
+      # IRSA gan projected token rieng qua pod identity webhook va Secrets Store
+      # CSI tu xin token qua CSIDriver.tokenRequests -> ca hai khong phu thuoc
+      # token automount mac dinh (CKV_K8S_38). Kiem lai tren EKS o MH10.
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "insighthub.image" (dict "ctx" $ "img" .Values.image.api "component" "api") }}
+          imagePullPolicy: {{ .Values.image.api.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "insighthub.configMapName" . }}
+          env:
+            {{- include "insighthub.secretEnv" . | nindent 12 }}
+          # startupProbe che giai đoạn lifespan chờ connection pool (≤15s,
+          # api/app/core/db.py:46); liveness /healthz không chạm DB, readiness
+          # /readyz kiểm DB+schema+identity (api/app/routers/health.py).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            # readOnlyRootFilesystem: python-multipart spool file >1MB ra /tmp.
+            - name: tmp
+              mountPath: /tmp
+            {{- include "insighthub.csiVolumeMount" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- include "insighthub.csiVolume" . | nindent 8 }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

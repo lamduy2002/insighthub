@@ -1,0 +1,92 @@
+# CHỈ DÙNG CHO LOCAL (kind). Trên AWS, Postgres = RDS và Redis = ElastiCache,
+# credential đến từ Secrets Manager qua Secrets Store CSI — DAY3-CHECKLIST N.10/O.12
+# nói rõ values AWS KHÔNG được có StatefulSet. Chart này tồn tại riêng để điều đó
+# là bất biến theo cấu trúc, không phụ thuộc values.
+#
+# Cài TRƯỚC chart app để migration Job (hook pre-install) có sẵn Postgres:
+#   helm install insighthub-deps infra/helm/insighthub-local-deps \
+#     -n insighthub-local --create-namespace --kube-context kind-insighthub-lab --wait
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Secret mà chart app đọc theo tên (values.secrets.secretName bên đó).
+# GIÁ TRỊ GIẢ, CHỈ CHO LOCAL — không bao giờ dùng lại ở môi trường khác.
+appSecret:
+  create: true
+  name: insighthub-app-secrets
+  databaseUrlKey: database_url
+  redisUrlKey: redis_url
+
+# ServiceAccount mà pod của chart app chạy dưới. Ở dev, SA cùng tên do Terraform
+# root platform tạo kèm annotation IRSA; ở local chart này tạo bản trần. Tên phải
+# khớp values.serviceAccount.name của chart app.
+appServiceAccount:
+  create: true
+  name: insighthub
+
+postgres:
+  enabled: true
+  image:
+    # Cùng image + digest với docker-compose.yml:5.
+    repository: pgvector/pgvector
+    tag: 0.8.2-pg16
+    digest: sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc
+    pullPolicy: IfNotPresent
+  auth:
+    username: insighthub
+    password: insighthub
+    database: insighthub
+  service:
+    port: 5432
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClassName: ""
+  # User/group `postgres` của image postgres official.
+  runAsUser: 999
+  runAsGroup: 999
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+redis:
+  enabled: true
+  image:
+    # Quyết định N.10: dùng Redis 7.x (khớp spec §2.4 "Redis 7" và ElastiCache 7.1),
+    # KHÔNG dùng redis:8.2.2-alpine của docker-compose.yml (file đó giữ nguyên).
+    repository: redis
+    tag: 7.4.6-alpine
+    digest: sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+  runAsUser: 999
+  runAsGroup: 1000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# NetworkPolicy cho Postgres/Redis: chi pod cua chart app trong cung namespace
+# duoc vao 5432/6379. Pod app mang label app.kubernetes.io/name: insighthub
+# (Chart.Name cua chart app), con pod local-deps mang insighthub-local-deps ->
+# selector nay khong tu bat chinh no.
+networkPolicy:
+  enabled: true
+  appPodSelector:
+    matchLabels:
+      app.kubernetes.io/name: insighthub
+
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]

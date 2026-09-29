@@ -1,0 +1,21 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "localdeps.redisName" . }}
+  labels:
+    {{- include "localdeps.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  annotations:
+    checkov.io/skip1: CKV_K8S_21=helm template khong truyen -n nen render ra namespace default; cai dat that luon co -n insighthub-local - xem SPEC.md muc 13
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "localdeps.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end }}

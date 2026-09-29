@@ -1,0 +1,94 @@
+{{- if .Values.migration.enabled }}
+{{- /*
+Hook pre-install,pre-upgrade weight 0 — chạy TRƯỚC api/worker vì cả hai gọi
+check_schema() lúc startup và crash nếu thiếu schema (api/app/core/db.py:43-49).
+hook-delete-policy theo SPEC.md Mục 8: before-hook-creation,hook-succeeded.
+Local: Postgres do chart insighthub-local-deps cài trước (resource thường, không hook).
+Vòng chờ bên dưới là lớp phòng hờ cho cả local lẫn RDS.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insighthub.fullname" . }}-migration
+  labels:
+    {{- include "insighthub.componentLabels" (dict "ctx" . "component" "migration") | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    checkov.io/skip1: CKV_K8S_21=helm template khong truyen -n nen render ra namespace default; cai dat that luon co -n insighthub-<env> - xem SPEC.md muc 13
+    checkov.io/skip2: CKV_K8S_40=UID nuong trong image (app 1001, pgvector 999); doi UID phai build lai image va chown lai filesystem - xem SPEC.md muc 10
+    checkov.io/skip3: CKV_K8S_35=app doc DATABASE_URL/REDIS_URL tu env (api/app/core/config.py); chuyen sang secret dang file phai sua code app - xem SPEC.md muc 10
+    checkov.io/skip4: CKV2_K8S_6=EKS VPC CNI chua bat network policy agent nen NetworkPolicy khong duoc thuc thi; them policy khong enforce la cam giac an toan gia va de chan nham traffic ALB target-type ip - xem SPEC.md muc 10
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "insighthub.componentSelectorLabels" (dict "ctx" . "component" "migration") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "insighthub.serviceAccountName" . }}
+      # Chi chay psql toi DATABASE_URL, khong goi AWS API (CKV_K8S_38).
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        # Image pgvector chạy bằng user postgres (999), không phải 1001 của app.
+        runAsUser: {{ .Values.migration.runAsUser }}
+        runAsGroup: {{ .Values.migration.runAsGroup }}
+        fsGroup: {{ .Values.migration.runAsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migration
+          image: {{ include "insighthub.image" (dict "ctx" $ "img" .Values.migration.image "component" "migration") }}
+          imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            {{- include "insighthub.secretEnv" . | nindent 12 }}
+            - name: HOME
+              value: /tmp
+            - name: PGCONNECT_TIMEOUT
+              value: "5"
+            - name: WAIT_TIMEOUT
+              value: {{ .Values.migration.waitTimeoutSeconds | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            # Không bật set -x và không echo $DATABASE_URL — tránh lộ credential vào log.
+            - |
+              set -eu
+              deadline=$(( $(date +%s) + WAIT_TIMEOUT ))
+              until psql "$DATABASE_URL" -tAc 'SELECT 1' >/dev/null 2>&1; do
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  echo "FAIL: database chua san sang sau ${WAIT_TIMEOUT}s" >&2
+                  exit 1
+                fi
+                echo "cho database..."
+                sleep 2
+              done
+              echo "database san sang, chay init.sql"
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /sql/init.sql
+              echo "migration hoan tat"
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- include "insighthub.csiVolumeMount" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migration.resources | nindent 12 }}
+      volumes:
+        - name: sql
+          configMap:
+            name: {{ include "insighthub.fullname" . }}-migration-sql
+        - name: tmp
+          emptyDir: {}
+        {{- include "insighthub.csiVolume" . | nindent 8 }}
+{{- end }}
