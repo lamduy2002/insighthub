@@ -55,6 +55,11 @@ output "alb_controller_service_account_name" {
   value       = local.alb_controller_sa_name
 }
 
+output "certificate_arn" {
+  description = "ARN cert ACM wildcard *.do2603.click dùng chung (Ingress ALB, listener 443). Chỉ tham chiếu — không do Terraform tạo/xóa."
+  value       = data.aws_acm_certificate.app.arn
+}
+
 output "db_secret_arn" {
   description = "ARN secret DB credentials (SecretProviderClass)."
   value       = module.data.db_secret_arn

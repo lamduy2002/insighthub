@@ -13,6 +13,21 @@ locals {
   alb_controller_sa_name   = "aws-load-balancer-controller"
 }
 
+# ============================================================
+# ACM — cert wildcard *.do2603.click là tài nguyên DÙNG CHUNG có sẵn của lớp
+# DO2603, KHÔNG do root này tạo và KHÔNG được xóa: chỉ tham chiếu để lấy ARN
+# cho listener 443 của Ingress ALB (values-dev `ingress.certificateArn`).
+# Record Route53 `insighthub-lamduy.do2603.click` cũng không phải resource
+# Terraform — tạo bằng AWS CLI ở job deploy, xóa ở bước 4 teardown
+# (SPEC.md Mục 2/8).
+# ============================================================
+
+data "aws_acm_certificate" "app" {
+  domain      = "*.do2603.click"
+  statuses    = ["ISSUED"]
+  most_recent = true
+}
+
 module "network" {
   source = "./modules/network"
 
