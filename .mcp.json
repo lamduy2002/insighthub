@@ -15,7 +15,7 @@
         "kubernetes-mcp-server@0.0.67",
         "--read-only",
         "--kubeconfig",
-        "/home/lamdii2002/insighthub/infra/k8s/mcp-readonly.kubeconfig"
+        "/home/lamdii2002/.kube/insighthub-mcp-readonly.kubeconfig"
       ]
     },
     "prometheus": {

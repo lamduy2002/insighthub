@@ -163,6 +163,27 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
   ```
   → `infra/.terraform/` (và `infra/bootstrap/github-oidc/.terraform/`) **bị loại** ✅ (so khớp theo tên thư mục ở mọi cấp). `venv/` **bị loại** ✅ (thực tế `venv/` ở root cũng không thuộc `SOURCE_ROOTS`). `.terraform.lock.hcl` **không** bị loại — đúng, vì file này được commit.
 - **Không** bị loại: `tfplan`, `tfplan.json`, `teardown.tfplan`, `lab.tfplan`, `*.tfstate*` → nếu nằm trong `infra/` ở local (không có trên runner) thì `source_sha256` local ≠ CI. Đã đo: 3 file plan (`infra/tfplan`, `infra/teardown.tfplan`, `infra/bootstrap/github-oidc/tfplan`) → `6e7de32b…`; chuyển sang `/tmp/insighthub-plans/` → `0456ae13…`. `find infra -name "*tfplan*"` giờ rỗng.
+- **Quy tắc rộng hơn (đo thật 2026-09-29)**: ràng buộc không chỉ là file plan —
+  **mọi file local-only nằm trong `SOURCE_ROOTS` đều phá source binding**, vì
+  `source_files()` đi `os.walk` chứ không hỏi git, nên `.gitignore` **không**
+  loại được gì. Lần chạy CI đầu tiên trên commit đã đóng băng vẫn lệch
+  `source_sha256`, truy ra 3 file gitignore có chủ đích:
+  `infra/.infracost/pricing.gob`, `infra/.infracost/terraform_modules/manifest.json`
+  (cache Infracost) và `infra/k8s/mcp-readonly.kubeconfig` (kubeconfig MCP, có
+  token). Cách xử lý: xoá cache Infracost (tái tạo được), chuyển kubeconfig ra
+  `~/.kube/` và trỏ lại đường dẫn trong `.mcp.json`. Lưu ý **không dùng symlink**
+  để lách — `source_files()` từ chối symlink (`Source symlink unsupported`).
+  Lệnh kiểm trước mỗi lần đóng băng (so danh sách của verify.py với `git ls-files`):
+  ```bash
+  venv/bin/python -c "
+  import importlib.util,pathlib,subprocess
+  root=pathlib.Path('.').resolve()
+  spec=importlib.util.spec_from_file_location('verify', root/'scripts'/'verify.py')
+  m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+  local={p.relative_to(root).as_posix() for p in m.source_files(root)}
+  tracked=set(subprocess.run(['git','ls-files'],capture_output=True,text=True).stdout.split())
+  print(sorted(local-tracked) or 'OK')"
+  ```
 - **Quy tắc**: mọi `terraform plan -out`, `terraform show -json`, `terraform plan -destroy -out` đều ghi ra ngoài repo — `/tmp/insighthub-plans/` ở local, `$RUNNER_TEMP` ở CI (lệnh mẫu: `infra/SPEC.md` Mục 11). Trước bước 2 và bước 5: chạy `find infra -path '*/.terraform' -prune -o \( -name "*tfplan*" -o -name "*.tfstate*" \) -print` phải rỗng. Loại `.terraform/` vì `terraform init` luôn tạo `.terraform/terraform.tfstate` — đó là cache cấu hình backend, không phải state hạ tầng; thư mục này vừa gitignore vừa nằm trong `EXCLUDED_DIRS` nên không ảnh hưởng fingerprint.
 
 **Ràng buộc bổ sung — môi trường verifier**: `scripts/verify.py` cần **Python 3.11+**, và chạy pytest bằng `sys.executable` → phải gọi bằng Python của venv đã cài `python -m pip install --require-hashes -r scripts/requirements-verification.txt` (`GETTING_STARTED.md` mục "Milestone verifier dependencies"). `/usr/bin/python3` (3.10, không pytest) → INCOMPLETE ngay ở `run_tests`. Pipeline CI phải làm đúng như vậy: `setup-python` 3.11+, venv, `pip install --require-hashes`, rồi chạy verifier bằng Python của venv.

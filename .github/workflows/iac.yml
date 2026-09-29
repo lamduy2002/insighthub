@@ -195,6 +195,18 @@ jobs:
           echo "$(grep "conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" /tmp/conftest.sums | cut -d' ' -f1)  /tmp/conftest.tgz" | sha256sum -c -
           tar -xzf /tmp/conftest.tgz -C /tmp conftest
           sudo install -m 0755 /tmp/conftest /usr/local/bin/conftest
+      # In ĐÚNG hai claim mà trust policy đối chiếu (sub, aud) — không in token.
+      # Lỗi "Not authorized to perform sts:AssumeRoleWithWebIdentity" không nói
+      # claim nào lệch, nên không có bước này thì chỉ còn cách đoán.
+      - name: OIDC claim (sub/aud) — để đối chiếu với trust policy
+        run: |
+          set -euo pipefail
+          tok=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | python3 -c 'import sys,json;print(json.load(sys.stdin)["value"])')
+          payload=$(echo "$tok" | cut -d. -f2)
+          pad=$(( (4 - ${#payload} % 4) % 4 )); payload="$payload$(printf '=%.0s' $(seq 1 $pad))"
+          echo "$payload" | tr '_-' '/+' | base64 -d 2>/dev/null \
+            | python3 -c 'import sys,json;c=json.load(sys.stdin);print("sub =",c.get("sub"));print("aud =",c.get("aud"));print("repository =",c.get("repository"));print("event_name =",c.get("event_name"))'
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
