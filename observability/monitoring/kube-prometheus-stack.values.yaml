@@ -64,8 +64,15 @@ alertmanager:
         memory: 128Mi
 
 grafana:
-  adminPassword: insighthub
+  # Admin credentials come from Secret monitoring/grafana-admin (create-grafana-admin-secret.sh).
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
   defaultDashboardsTimezone: Asia/Ho_Chi_Minh
+  # Single 2-CPU kind node: a rolling update needs a second Grafana pod and stays Pending on CPU.
+  deploymentStrategy:
+    type: Recreate
   resources:
     requests:
       cpu: 50m
