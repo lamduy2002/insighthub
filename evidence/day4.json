@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "day": 4,
+  "mode": "real",
+  "observed_at": "2026-09-29T20:19:43Z",
+  "source_sha256": "181bc503f87a56d56ff3e84d01a07d778a9c8285c003ee0da776f7656873af9c",
+  "note": "REAL: kind cluster insighthub-lab (local, not EKS), kube-prometheus-stack 91.8.1. Three incidents injected with scripts/chaos/*, each alert FIRING then RESOLVED and delivered to Slack #alerts; RCA by independent subagents (Prometheus MCP + Kubernetes MCP) with samples harvested verbatim by scripts/chaos/harvest-samples.py. Token/cost panels are fixture-mode estimates. Worker is observed indirectly (cAdvisor + kube-state-metrics + redis queue depth). See infra/DAY4-CHECKLIST.md.",
+  "artifacts": {
+    "dashboard": {
+      "path": "observability/grafana-dashboards/insighthub-red.json",
+      "sha256": "d5acf080d8af7fdb32bc89478b3eebbd74a46b4f2ba178ad1075c43438bd2fcb"
+    },
+    "rules": {
+      "path": "observability/prometheus-rules/anomaly-rules.yaml",
+      "sha256": "fabea2c5e8ca5012585ba24417c9a79022a7283e502f092793cd96230396daae"
+    },
+    "rule_tests": {
+      "path": "observability/prometheus-rules/anomaly-rules_test.yaml",
+      "sha256": "f5e8666fb4f89d06cfb8987a4192f7cc8602c27e031d52eba073c10fe39ca3ff"
+    },
+    "rca": {
+      "path": "evidence/incident-1.json",
+      "sha256": "6a2605c78068f263be615297b00248e5357faab7028a2347114b071b95c95254"
+    },
+    "rca_2": {
+      "path": "evidence/incident-2.json",
+      "sha256": "c2aa1a5fc6cdc900369784ab187cb82e1c8bcb5a0c7683f495b40482ee891621"
+    },
+    "rca_3": {
+      "path": "evidence/incident-3.json",
+      "sha256": "0d2ea11bc4475bdcc6edfa7f71e3b341936c60ba9d739e711c94d878706cb279"
+    },
+    "mlops_notes": {
+      "path": "observability/mlops-overview-notes.md",
+      "sha256": "ae275c9f6140d1dd5e095f84a5e7fab20fdff91c49183d65b664377e4928d8ac"
+    }
+  }
+}

@@ -1,0 +1,217 @@
+{
+  "incident_id": "incident-2-queue-backlog",
+  "started_at": "2026-09-29T19:34:00Z",
+  "ended_at": "2026-09-29T19:57:00Z",
+  "alert": "InsightHubQueueDepthAnomaly",
+  "summary": "Deployment insighthub-ingestion-worker was scaled to 0 replicas from about 19:44Z to 19:52Z, and the ARQ queue depth grew from 0 to 41 with documents stuck in pending; when the worker returned to 1 replica the queue drained to 0. No 5xx or LLM latency change was observed.",
+  "root_cause": "ingestion-worker deployment scaled to 0 replicas (no consumer for arq:queue), so uploads accumulated as pending; the actor that scaled it down is not identified",
+  "confidence": 0.75,
+  "confidence_reason": "Two independent signals agree in time (K8s replica count 0 for the worker via kube-state-metrics and K8s events for scale down/up, plus app metrics queue depth and pending documents), and 3 alternatives were ruled out; not higher because the actor and reason for the scale-down are unverified.",
+  "hypotheses": [
+    "Queue backlog built in arq:queue, peaking well above the baseline of 0 | bằng chứng: redis_key_size{db=\"db0\",key=\"arq:queue\",namespace=\"insighthub-local\"} = 41 @ 2026-09-29T19:49:30Z (baseline 0 @ 2026-09-29T19:34:00Z)",
+    "Ingestion worker deployment had spec replicas 0 during the backlog, versus baseline 1 | bằng chứng: kube_deployment_spec_replicas{deployment=\"insighthub-ingestion-worker\",namespace=\"insighthub-local\"} = 0 @ 2026-09-29T19:44:30Z (baseline 1 @ 2026-09-29T19:34:00Z)",
+    "No available worker replica while the queue grew | bằng chứng: kube_deployment_status_replicas_available{deployment=\"insighthub-ingestion-worker\",namespace=\"insighthub-local\"} = 0 @ 2026-09-29T19:44:30Z",
+    "Uploaded documents stayed in pending (not processed), matching the queue depth | bằng chứng: insighthub_documents_total{status=\"pending\",job=\"insighthub-api\"} = 41 @ 2026-09-29T19:49:30Z (baseline ready=83 @ 2026-09-29T19:34:00Z, pending 0 before 19:44Z)"
+  ],
+  "ruled_out": [
+    "Node memory pressure | bằng chứng: kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\",node=\"insighthub-lab-control-plane\"} = 0 @ 2026-09-29T19:34:00Z (max over window is 0)",
+    "API errors / API-side failure (5xx) | bằng chứng: insighthub:http_errors_5xx:rate5m{} = 0 @ 2026-09-29T19:34:00Z (max over window is 0)",
+    "Slow LLM/embedding provider | bằng chứng: insighthub:llm_call_latency_seconds:p95_5m{} = 0.23750000000000002 @ 2026-09-29T19:38:00Z (max over window, equal to baseline 0.2375 @ 2026-09-29T19:34:00Z)",
+    "API pod loss/rollout | bằng chứng: kube_deployment_status_replicas{deployment=\"insighthub-api\",namespace=\"insighthub-local\"} = 1 @ 2026-09-29T19:34:00Z (min over window is 1)"
+  ],
+  "unverified": [
+    "Who/what scaled the worker deployment to 0 (kubectl, HPA, chaos script) and why: needs Kubernetes audit log; events only show ScalingReplicaSet down at 2026-09-29T19:43:47Z and up at 2026-09-29T19:52:38Z",
+    "Postgres slowness as a cause: pg_stat_activity_count showed no stuck sessions but no latency metric was harvested; needs query duration metrics",
+    "Whether all 41 pending documents reached ready after recovery: insighthub_documents_total ready rose from 86 to 88 by 19:54Z, which is less than 41 (metric is per-pod counter of a new api pod), needs DB count of documents by status"
+  ],
+  "no_data": [
+    "insighthub_llm_call_errors_total"
+  ],
+  "samples": [
+    {
+      "metric": "redis_key_size",
+      "labels": {
+        "container": "redis-exporter",
+        "db": "db0",
+        "endpoint": "metrics",
+        "instance": "10.244.0.19:9121",
+        "job": "insighthub-redis-exporter",
+        "key": "arq:queue",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-redis-exporter-74f8654685-v5r9w",
+        "service": "insighthub-redis-exporter"
+      },
+      "timestamp": "2026-09-29T19:34:00Z",
+      "value": 0.0
+    },
+    {
+      "metric": "redis_key_size",
+      "labels": {
+        "container": "redis-exporter",
+        "db": "db0",
+        "endpoint": "metrics",
+        "instance": "10.244.0.19:9121",
+        "job": "insighthub-redis-exporter",
+        "key": "arq:queue",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-redis-exporter-74f8654685-v5r9w",
+        "service": "insighthub-redis-exporter"
+      },
+      "timestamp": "2026-09-29T19:49:30Z",
+      "value": 41.0
+    },
+    {
+      "metric": "kube_deployment_spec_replicas",
+      "labels": {
+        "container": "kube-state-metrics",
+        "deployment": "insighthub-ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics"
+      },
+      "timestamp": "2026-09-29T19:34:00Z",
+      "value": 1.0
+    },
+    {
+      "metric": "kube_deployment_spec_replicas",
+      "labels": {
+        "container": "kube-state-metrics",
+        "deployment": "insighthub-ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics"
+      },
+      "timestamp": "2026-09-29T19:44:30Z",
+      "value": 0.0
+    },
+    {
+      "metric": "kube_deployment_status_replicas_available",
+      "labels": {
+        "container": "kube-state-metrics",
+        "deployment": "insighthub-ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics"
+      },
+      "timestamp": "2026-09-29T19:44:30Z",
+      "value": 0.0
+    },
+    {
+      "metric": "insighthub_documents_total",
+      "labels": {
+        "container": "api",
+        "endpoint": "http",
+        "instance": "10.244.0.28:8000",
+        "job": "insighthub-api",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-api-776f558c-gw88j",
+        "service": "insighthub-api",
+        "status": "pending"
+      },
+      "timestamp": "2026-09-29T19:49:30Z",
+      "value": 41.0
+    },
+    {
+      "metric": "insighthub_documents_total",
+      "labels": {
+        "container": "api",
+        "endpoint": "http",
+        "instance": "10.244.0.28:8000",
+        "job": "insighthub-api",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-api-776f558c-gw88j",
+        "service": "insighthub-api",
+        "status": "ready"
+      },
+      "timestamp": "2026-09-29T19:34:00Z",
+      "value": 83.0
+    },
+    {
+      "metric": "insighthub:http_errors_5xx:rate5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:34:00Z",
+      "value": 0.0
+    },
+    {
+      "metric": "insighthub:llm_call_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:34:00Z",
+      "value": 0.2375
+    },
+    {
+      "metric": "insighthub:llm_call_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:38:00Z",
+      "value": 0.23750000000000002
+    },
+    {
+      "metric": "kube_node_status_condition",
+      "labels": {
+        "condition": "MemoryPressure",
+        "container": "kube-state-metrics",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "monitoring",
+        "node": "insighthub-lab-control-plane",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics",
+        "status": "true"
+      },
+      "timestamp": "2026-09-29T19:34:00Z",
+      "value": 0.0
+    },
+    {
+      "metric": "kube_deployment_status_replicas",
+      "labels": {
+        "container": "kube-state-metrics",
+        "deployment": "insighthub-api",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics"
+      },
+      "timestamp": "2026-09-29T19:34:00Z",
+      "value": 1.0
+    }
+  ],
+  "tools_used": [
+    "mcp__prometheus__prometheus_query_range",
+    "mcp__kubernetes__events_list",
+    "mcp__kubernetes__pods_list"
+  ],
+  "recommended_actions": [
+    "Restore insighthub-ingestion-worker to replicas>=1 and keep it there (hypotheses 2,3)",
+    "Alert on kube_deployment_status_replicas_available{deployment=\"insighthub-ingestion-worker\"} == 0 for >1m to detect the missing consumer before the queue grows (hypotheses 1,3)",
+    "Restrict who can scale the worker deployment and audit the scale-down (hypothesis 2)"
+  ],
+  "injected_fault": {
+    "name": "queue-backlog",
+    "script": "scripts/chaos/inject-queue-backlog.sh",
+    "mechanism": "Deployment insighthub-ingestion-worker scaled to 0 replicas and 40 unique documents uploaded (one per 8s) so jobs pile up in the ARQ sorted set arq:queue with no consumer; API keeps returning 202. Recovery: worker scaled back to 1, backlog drained, chaos-* documents deleted.",
+    "fault_started_at": "2026-09-29T19:43:47Z",
+    "fault_removed_at": "2026-09-29T19:52:37Z"
+  },
+  "injected_fault_evaluation": {
+    "verdict": "correct",
+    "detail": "The blind investigator found that the worker Deployment had spec/available replicas 0 while arq:queue grew 0 -> 41 and pending documents matched it, and that the queue drained after the worker returned; alternatives (5xx, LLM latency, node memory pressure, API rollout) were ruled out with harvested samples. Honest gaps it reported itself: it could not identify who scaled the worker down (it was the chaos script; events show only ScalingReplicaSet), and DB slowness was left unverified. Its unverified note that documents ready rose only 86 -> 88 (less than 41) is explained by the script deleting the 40 chaos-* documents after the drain, not by a processing failure. Peak 41 vs 40 uploads: one extra job came from the baseline load generator."
+  },
+  "chaos_window": {
+    "started_at": "2026-09-29T19:43:47Z",
+    "fault_removed_at": "2026-09-29T19:52:37Z",
+    "ended_at": "2026-09-29T19:56:26Z"
+  },
+  "investigation_window_note": "started_at is ~10 min before the fault (after incident 1 had recovered), ended_at is after the alert resolved; samples must fall inside this window (verify.py:618).",
+  "rca_method": "Independent subagent with no session context and no knowledge of the injected fault; Prometheus MCP + Kubernetes MCP; samples verbatim from scripts/chaos/harvest-samples.py; prompt: observability/rca-prompt.md. hypotheses/ruled_out/samples are unedited subagent output."
+}
