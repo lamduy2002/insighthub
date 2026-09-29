@@ -21,4 +21,7 @@ Smoke qua port-forward (không có Ingress ở values-local):
 {{- end }}
 
 Hook (SecretProviderClass/Job) KHÔNG bị `helm uninstall` xoá — SPEC.md Mục 8 bước 2:
-  kubectl -n {{ .Release.Namespace }} delete job,secretproviderclass,serviceaccount -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} delete job,secretproviderclass -l app.kubernetes.io/instance={{ .Release.Name }}
+
+ServiceAccount "{{ include "insighthub.serviceAccountName" . }}" KHÔNG thuộc release này
+(local: chart insighthub-local-deps; dev: Terraform root platform) — đừng xoá tay ở đây.

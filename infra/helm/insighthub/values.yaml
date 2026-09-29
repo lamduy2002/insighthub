@@ -34,12 +34,16 @@ image:
     pullPolicy: Always
 imagePullSecrets: []
 
+# Chart này KHÔNG tạo ServiceAccount ở bất kỳ môi trường nào — SA phải tồn tại
+# TRƯỚC release (migration Job là hook pre-install, chạy trước mọi resource
+# thường, nên SA tạo trong cùng release sẽ đến quá muộn):
+#   dev   → Terraform root platform, kèm annotation eks.amazonaws.com/role-arn (IRSA, MH6)
+#   local → chart infra/helm/insighthub-local-deps (cài trước), SA trần
+# `create` giữ lại làm guard: đặt true thì "insighthub.serviceAccountName" fail
+# ngay lúc render, thay vì im lặng chạy bằng SA không có IRSA.
 serviceAccount:
-  # dev: false — SA `insighthub` do Terraform root platform tạo kèm annotation IRSA (MH6).
-  # local: true — chart tự tạo SA trần.
   create: false
   name: insighthub
-  annotations: {}
 
 # Nguồn DATABASE_URL/REDIS_URL. Cùng tên Secret + tên khoá ở CẢ HAI môi trường:
 #   local → Secret do chart insighthub-local-deps tạo

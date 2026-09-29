@@ -3,6 +3,8 @@ insighthub-local-deps — release {{ .Release.Name }} / namespace {{ .Release.Na
 >> CHỈ DÙNG CHO CLUSTER KIND LOCAL. Không cài chart này lên EKS:
    trên AWS, Postgres = RDS và Redis = ElastiCache (không StatefulSet).
 >> Secret "{{ .Values.appSecret.name }}" chứa credential GIẢ cho local.
+>> ServiceAccount "{{ .Values.appServiceAccount.name }}" (SA của pod chart app;
+   trên dev do Terraform root platform tạo kèm annotation IRSA).
 
 Bước tiếp theo — cài chart app (migration Job sẽ tạo schema):
   helm install insighthub infra/helm/insighthub -n {{ .Release.Namespace }} \

@@ -1,7 +1,7 @@
 # LOCAL — cluster kind `insighthub-lab`, namespace insighthub-local.
 # KHÔNG phải AWS: không CSI, không ALB, LLM fixture.
-# Postgres/Redis + Secret `insighthub-app-secrets` do chart
-# infra/helm/insighthub-local-deps cài TRƯỚC release này.
+# Postgres/Redis + Secret `insighthub-app-secrets` + ServiceAccount `insighthub`
+# do chart infra/helm/insighthub-local-deps cài TRƯỚC release này.
 #
 #   helm install insighthub infra/helm/insighthub -n insighthub-local \
 #     --kube-context kind-insighthub-lab -f infra/helm/insighthub/values-local.yaml \
@@ -21,8 +21,9 @@ image:
     repository: insighthub/ingestion-worker
     pullPolicy: IfNotPresent
 
+# SA `insighthub` do chart insighthub-local-deps tạo (cài trước release này).
 serviceAccount:
-  create: true
+  create: false
   name: insighthub
 
 secretsStore:

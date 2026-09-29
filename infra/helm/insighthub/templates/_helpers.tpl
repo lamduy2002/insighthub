@@ -95,7 +95,15 @@ Gọi bằng (dict "ctx" $ "img" .Values.image.api "component" "api") — cần 
 {{- $ref -}}
 {{- end }}
 
+{{/*
+Chart app không có template ServiceAccount: SA phải tồn tại trước release
+(dev = Terraform root platform kèm IRSA, local = chart insighthub-local-deps).
+Guard để serviceAccount.create=true không âm thầm bị bỏ qua.
+*/}}
 {{- define "insighthub.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- fail "serviceAccount.create phải là false: chart insighthub không tạo ServiceAccount. Dev: Terraform root platform tạo SA kèm annotation IRSA. Local: chart infra/helm/insighthub-local-deps tạo, cài trước release này." }}
+{{- end }}
 {{- default (include "insighthub.fullname" .) .Values.serviceAccount.name }}
 {{- end }}
 

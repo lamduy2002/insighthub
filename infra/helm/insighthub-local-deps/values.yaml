@@ -18,6 +18,13 @@ appSecret:
   databaseUrlKey: database_url
   redisUrlKey: redis_url
 
+# ServiceAccount mà pod của chart app chạy dưới. Ở dev, SA cùng tên do Terraform
+# root platform tạo kèm annotation IRSA; ở local chart này tạo bản trần. Tên phải
+# khớp values.serviceAccount.name của chart app.
+appServiceAccount:
+  create: true
+  name: insighthub
+
 postgres:
   enabled: true
   image:
