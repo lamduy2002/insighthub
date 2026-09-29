@@ -62,9 +62,17 @@ resource "aws_db_parameter_group" "postgres" {
   family      = "postgres16"
   description = "InsightHub PostgreSQL 16 - bat buoc TLS (rds.force_ssl=1)"
 
+  # rds.force_ssl là parameter STATIC: RDS chỉ nạp lúc khởi động nên AWS luôn
+  # lưu apply_method = "pending-reboot", bất kể client gửi gì. Không khai
+  # tường minh thì provider mặc định "immediate" → mỗi lần plan lại thấy lệch
+  # và đòi sửa, khiến "fresh plan sau apply không thay đổi" (Acceptance §7.5)
+  # không bao giờ đạt. Instance được tạo kèm parameter group này ngay từ đầu
+  # nên giá trị đã có hiệu lực (ParameterApplyStatus = in-sync), không cần
+  # reboot thêm.
   parameter {
-    name  = "rds.force_ssl"
-    value = "1"
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
   }
 
   tags = var.tags
