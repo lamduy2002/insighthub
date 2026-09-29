@@ -15,18 +15,18 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 |---|---|---|---|
 | MH1 | `infra/` đủ main.tf/variables.tf/outputs.tf/providers.tf | dòng 825 | ✅ xong |
 | MH2 | Backend S3 + `use_lockfile` | dòng 826 | ✅ xong (`infra/backend.tf`) |
-| MH3 | EKS namespace resource | dòng 827 | ✅ code xong — `kubernetes_namespace.app` ở root **platform** (`infra/platform/main.tf`, tên từ output core `app_namespace`), đã `validate`; plan platform cần cluster sống (chưa apply) |
+| MH3 | EKS namespace resource | dòng 827 | ✅ **xong thật trên AWS** (2026-09-29) — `kubernetes_namespace.app` (root platform) tạo `insighthub-dev` trên EKS `insighthub-lab`, `kubectl get ns` → Active, label `managed-by=terraform`. Bằng chứng `evidence/day3-mh3-mh6.txt` |
 | MH4 | RDS PostgreSQL 16, encrypted, not public | dòng 828 | ✅ xong (`storage_encrypted=true`, `publicly_accessible=false`) |
 | MH5 | ElastiCache Redis 7, **private subnet** | dòng 829 | ✅ code xong — thêm `aws_subnet.private[*]` (2 AZ, route table riêng không IGW/NAT, chi phí $0), `aws_db_subnet_group`/`aws_elasticache_subnet_group` đã chuyển sang subnet này. EKS cluster/node group giữ nguyên public. Chưa apply. |
-| MH6 | IRSA: ServiceAccount + IAM Role binding | dòng 830, verify bằng `kubectl describe sa insighthub` | ✅ code xong — `kubernetes_service_account.insighthub` + `aws_iam_role.insighthub_app` (trust `system:serviceaccount:insighthub-dev:insighthub`, chỉ `secretsmanager:GetSecretValue`+`DescribeSecret` đúng 2 ARN secret). Chưa apply nên chưa `kubectl describe` được thật. |
-| MH7 | `.github/workflows/iac.yml` | dòng 831 | ❌ chưa làm — chỉ có `starter.yml`; bootstrap IAM/OIDC đã xong (`infra/bootstrap/github-oidc/`) nhưng workflow YAML chưa viết |
-| MH8 | Pipeline jobs fmt→lint→scan→policy→plan→cost→apply | dòng 832 | ❌ chưa làm |
-| MH9 | Pipeline green trên PR | dòng 833 | ❌ chưa làm |
-| MH10 | InsightHub Helm deploy | dòng 834 | ⚠️ **local PASS, AWS chưa** — 2 chart ở `infra/helm/` (`insighthub`, `insighthub-local-deps`), đã `helm upgrade` thật trên kind `insighthub-lab` ns `insighthub-local` (2026-09-29): 5/5 pod Running, smoke curl `/healthz` 200 · `/readyz` 200 · `POST /documents` 202 · status `ready` <2s · `POST /chat` 200 kèm `sources`; UI kiểm trên trình duyệt OK. Trên EKS chưa deploy (cần apply core+platform trước). Theo Guide local-first: **local PASS không tính là hoàn thành AWS** |
-| MH11 | Smoke test upload+chat | dòng 835 | ❌ chưa làm |
+| MH6 | IRSA: ServiceAccount + IAM Role binding | dòng 830, verify bằng `kubectl describe sa insighthub` | ✅ **xong thật, chứng minh ở mức runtime** — `kubectl describe sa insighthub -n insighthub-dev` → annotation `eks.amazonaws.com/role-arn: ...insighthub-app-role`; pod thật inject `AWS_ROLE_ARN=...insighthub-app-role` + `AWS_WEB_IDENTITY_TOKEN_FILE` (KHÔNG phải node role); và Secret `insighthub-app-secrets` được CSI sync ra 2 key → pod đã **thực sự dùng IRSA đọc được Secrets Manager**. Bằng chứng `evidence/day3-mh3-mh6.txt` |
+| MH7 | `.github/workflows/iac.yml` | dòng 831 | ✅ đã viết — 7 job + `verification-source`, action pin theo commit SHA, conftest tải kèm verify sha256. Bootstrap OIDC **đã apply thật** (12 resource), 4 repo variable + 2 GitHub Environment (`production` có required reviewer) đã tạo |
+| MH8 | Pipeline jobs fmt→lint→scan→policy→plan→cost→apply | dòng 832 | ✅ đủ 7 job **đúng tên**: `fmt`, `lint`, `security-scan`, `policy-check`, `plan`, `cost-estimate`, `apply`. Saved plan qua S3 SSE-KMS (không phải artifact GitHub), `apply` verify sha256 trước khi apply đúng file đã review |
+| MH9 | Pipeline green trên PR | dòng 833 | ❌ **CHƯA ĐẠT — chặn ngoài tầm code**. PR #2 đã mở, run `36532890593`: **8/8 job fail sau 6s, chưa job nào được cấp runner** (`runner` rỗng). Annotation: *"recent account payments have failed or your spending limit needs to be increased"*. Đã loại trừ nguyên nhân từ code: mọi `runs-on` đều `ubuntu-24.04` (runner chuẩn, miễn phí cho repo public), `/actions/permissions` = `enabled: true`, và **`starter.yml` của giảng viên cũng fail y hệt cùng lúc** → chặn ở cấp tài khoản. Không có thay đổi code nào gỡ được. Xem `evidence/day3-submission.md` |
+| MH10 | InsightHub Helm deploy | dòng 834 | ✅ **xong cả local lẫn AWS**. AWS (2026-09-29): `helm upgrade --install` chart `insighthub` lên ns `insighthub-dev` với `values-dev.yaml` + image digest ECR + `certificate_arn` + `--set-file migration.initSql`; 4/4 pod Running, HPA đọc CPU, Ingress cấp ALB. Chart `insighthub-local-deps` **cố ý KHÔNG cài lên EKS** (Postgres=RDS, Redis=ElastiCache). Local trước đó — 2 chart ở `infra/helm/` (`insighthub`, `insighthub-local-deps`), đã `helm upgrade` thật trên kind `insighthub-lab` ns `insighthub-local` (2026-09-29): 5/5 pod Running, smoke curl `/healthz` 200 · `/readyz` 200 · `POST /documents` 202 · status `ready` <2s · `POST /chat` 200 kèm `sources`; UI kiểm trên trình duyệt OK. Trên EKS chưa deploy (cần apply core+platform trước). Theo Guide local-first: **local PASS không tính là hoàn thành AWS** |
+| MH11 | Smoke test upload+chat | dòng 835 | ✅ **xong trên HTTPS domain thật** `https://insighthub-lamduy.do2603.click`: `/healthz` 200 · `POST /documents` (PDF có text) **202 trong 0.21s** (SLA <1.0s) · status `ready` sau **1.7s** (SLA <30s) · `POST /chat` 200 kèm `sources` trích đúng PDF vừa upload. Thêm: HTTP→HTTPS 301, `/` (web) 200, `/metrics` 404 (không public). Output `evidence/day3-smoke-https.txt` |
 | MH12 | `tflint --recursive` no warnings | dòng 836 | ✅ xong — đã chạy lại trên cả module chính + `infra/bootstrap/github-oidc/`: 0 errors, 0 warnings |
 | MH13 | `checkov` no HIGH | dòng 837 | ✅ `checkov -d infra/` → **687 passed, 0 failed, 56 skipped, exit 0** (2026-09-29; số cũ 157/0/24 là khi chưa có Helm chart trong `infra/`) — phần `terraform` 163/0/**25** (thêm CKV_AWS_339 khi pin `eks_version`, SPEC Mục 10), `helm` 511/0/**31**, `kubernetes` 13/0/0. Mọi finding bỏ qua đều là `#checkov:skip` / `checkov.io/skip<n>` gắn tại resource kèm lý do (SPEC Mục 10 + 10b), không `--skip-check` toàn cục, không `--soft-fail`. Vẫn thiếu xác nhận độc lập severity "không HIGH" cho các finding skip (checkov OSS không trả field `severity`), nhưng exit code 0 nên job security-scan trong pipeline sẽ xanh. |
-| MH14 | All resources tagged | dòng 838 | ✅ áp dụng quyết định J.1 — `owner` (chữ thường) duy nhất trong `common_tags`, không còn `Owner`. Module bootstrap dùng tag scheme riêng có chủ đích (xem SPEC.md mục 2, phần Tagging) |
+| MH14 | All resources tagged | dòng 838 | ✅ **xác minh trên AWS thật**: Tagging API trả **29 ARN** mang `LabId=day3-terraform`, đủ 8 tag (`project, environment, owner, cost_center, managed_by, Class, LabId, ExpiresAt`) — `evidence/day3-mh14-tags.txt`. Lưu ý trung thực: `aws_iam_role_policy`, `aws_iam_role_policy_attachment`, `aws_kms_alias`, `aws_eks_access_policy_association` **không nhận tag** (API không có trường tag), không phải bỏ sót. Áp dụng quyết định J.1 — `owner` (chữ thường) duy nhất trong `common_tags`, không còn `Owner`. Module bootstrap dùng tag scheme riêng có chủ đích (xem SPEC.md mục 2, phần Tagging) |
 
 ## B. Non-functional (§7.3, dòng 802-809)
 
@@ -36,7 +36,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | 2 | `checkov -d infra/` no HIGH | ✅ 687 passed, 0 failed, 56 skipped kèm lý do inline (xem mục A/MH13) |
 | 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ✅ local (2026-09-25) — `infra/policy/terraform/main.rego` (18 rule `deny`, Rego v1) + `main_test.rego` (`conftest verify`: 23/23 pass). Chạy trên plan thật (`terraform show -json tfplan`): **19 passed, 0 failures** (2026-09-29, plan core 50 to add). Danh sách rule + lý do helper `is_true`: `infra/SPEC.md` Mục 11. ⚠️ Pipeline CI (`iac.yml`) chưa có — CI phải cài Conftest 0.70.x. |
 | 4 | Tags: project, environment, owner, cost_center, managed_by | ✅ áp dụng quyết định J.1 |
-| 5 | Pipeline OIDC AWS (no long-lived keys) | ⚠️ code xong, chưa apply — `infra/bootstrap/github-oidc/` có OIDC provider + 2 role (`gh_plan`/`gh_apply`), `terraform plan` sạch (10 to add); chưa apply nên GitHub Actions thật vẫn chưa dùng được. Mọi apply thủ công hôm nay vẫn qua IAM user `DE000215` (long-lived key), hợp lệ cho thao tác thủ công. |
+| 5 | Pipeline OIDC AWS (no long-lived keys) | ✅ bootstrap **đã apply thật** (12 resource): 2 role `gh_plan`/`gh_apply` trust theo `sub=...:environment:infra-plan|production` (StringEquals, không wildcard), KMS key cho saved plan. OIDC provider chuyển sang **data source** (xem J.6). ⚠️ chưa chứng minh được end-to-end vì Actions bị chặn billing (MH9). Lịch sử: code xong, chưa apply — `infra/bootstrap/github-oidc/` có OIDC provider + 2 role (`gh_plan`/`gh_apply`), `terraform plan` sạch (10 to add); chưa apply nên GitHub Actions thật vẫn chưa dùng được. Mọi apply thủ công hôm nay vẫn qua IAM user `DE000215` (long-lived key), hợp lệ cho thao tác thủ công. |
 | 6 | Secret qua AWS Secrets Manager | ✅ xong |
 | 7 | Infracost dự toán | ✅ xong (`infra/SPEC.md:209`, ngày 2026-09-22) |
 
@@ -52,13 +52,13 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | `terraform plan -out=tfplan` → deterministic | ✅ **sửa thật** — trước đây dòng này bị đánh dấu ✅ nhầm: `public_access_cidrs` lấy từ `data.http.my_ip` khiến plan **không** deterministic (đổi theo IP mạng). Đã bỏ `data.http`, dùng `var.operator_cidrs` bắt buộc truyền — giờ plan mới thật sự deterministic. |
 | `conftest test --policy policy/terraform tfplan.json` → pass — **bắt buộc** | ✅ local — chạy từ `infra/`, plan thật: **19 passed, 0 failures** (2026-09-29). ⚠️ `tfplan.json` **không được nằm trong `infra/` khi chạy checkov** (verify.py copy cả `infra/` rồi `checkov -d .` → checkov quét plan JSON, không thấy inline `#checkov:skip` → fail CKV2_AWS_57/50...). Sinh plan JSON ra ngoài `infra/` hoặc xoá trước bước checkov — xem SPEC Mục 11. |
 | `infracost breakdown --path infra/` | ✅ |
-| `gh run list --workflow=iac.yml` → ✓ | ❌ |
-| `kubectl get ns insighthub-dev` → exists | ❌ — namespace tên thật là `insighthub-dev` khi `var.environment=dev` (mã hoá `insighthub-${var.environment}`), code đã sẵn sàng, chưa apply |
-| `kubectl get pods -n insighthub-dev` → Ready | ❌ |
-| `curl .../healthz` → 200 | ❌ |
-| `curl -X POST .../documents` → 202 | ❌ |
-| `GET /documents` → ready <30s | ❌ |
-| `curl -X POST .../chat` → 200 | ❌ |
+| `gh run list --workflow=iac.yml` → ✓ | ❌ — workflow tồn tại, run `36532890593` fail do chặn billing cấp tài khoản (MH9) |
+| `kubectl get ns insighthub-dev` → exists | ✅ Active (2026-09-29) |
+| `kubectl get pods -n insighthub-dev` → Ready | ✅ 4/4 Running (api×2 theo HPA minReplicas, worker, web) |
+| `curl .../healthz` → 200 | ✅ 200 (HTTPS, domain thật) |
+| `curl -X POST .../documents` → 202 | ✅ 202 trong **0.21s** (SLA <1.0s) |
+| `GET /documents` → ready <30s | ✅ **1.7s** |
+| `curl -X POST .../chat` → 200 | ✅ 200, `sources` trích đúng PDF vừa upload |
 
 ## D. Kiến trúc §2.3 (dòng 189-204)
 
@@ -100,7 +100,7 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 
 | Yêu cầu | Nguồn | Trạng thái |
 |---|---|---|
-| `lab-manifest.json` lập **TRƯỚC** khi apply | dòng 25 | ❌ sai quy trình — đã lập **BÙ SAU** (`evidence/day3-lab1-manifest.json`), đã ghi nhận trung thực trong chính file đó |
+| `lab-manifest.json` lập **TRƯỚC** khi apply | dòng 25 | ✅ **đã sửa ở lượt 2** — `evidence/day3-lab2-manifest.json` lập trước khi tạo bất kỳ tài nguyên nào, kèm `evidence/day3-inventory-before.txt`. (Lượt 1 từng lập bù sau, đã ghi nhận trung thực trong `day3-lab1-manifest.json` — không xoá lịch sử đó) |
 | Tag `Class, LabId, Owner, ExpiresAt` | dòng 27 | ✅ code xong — `var.expires_at` **không còn default `""`**, bắt buộc truyền `-var`/`TF_VAR_expires_at` mỗi lần apply (Terraform tự chặn nếu thiếu). Đã test plan với `expires_at=2026-09-23T23:59:00+07:00` thành công. `Owner` (viết hoa) đã bỏ theo quyết định J.1 (dùng `owner` chữ thường, case-insensitive nên vẫn đáp ứng Guide). |
 | Teardown + evidence trước/sau | dòng 187-190 (SPEC.md) | ✅ xong — inventory before/after, teardown sạch 34/34, 0 orphan |
 | Gỡ inline policy tự cấp sau lượt cuối | suy từ mục "Kiểm tra tài nguyên còn sót" | ❌ chưa gỡ — đang giữ vì còn 1 lượt apply cuối cần dùng (đã ghi rõ trong manifest) |
@@ -110,11 +110,11 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 | Yêu cầu | Nguồn | Trạng thái |
 |---|---|---|
 | Branch `day3-terraform` | §4.3 dòng 380 | ✅ đúng branch hiện tại |
-| PR title `[Day 3] <mô tả>` | §4.3 dòng 386-388 | ❌ chưa mở PR nào cho Day 3 |
-| `ai-prompts/day3.md` ≥3 prompt, đúng format (Host/Version/Context/Time/Prompt/Why/What changed) | §4.4 dòng 396-422 | ❌ chưa tồn tại |
+| PR title `[Day 3] <mô tả>` | §4.3 dòng 386-388 | ✅ PR #2 — `[Day 3] IaC + pipeline: Terraform core/platform, policy gates, Helm chart` |
+| `ai-prompts/day3.md` ≥3 prompt, đúng format (Host/Version/Context/Time/Prompt/Why/What changed) | §4.4 dòng 396-422 | ✅ **4 prompt nguyên văn** từ phiên 29/09/2026, đủ 7 trường. Không chép prompt pack giảng viên |
 | `verify-day-3.sh` PASS | §4.2 dòng 362-372 | ❌ chưa chạy được — sẽ FAIL ở bước `run_tests` (thiếu `tests/milestones/day3/`) và các bước sau |
-| Submission format §7.8 | dòng 908-923 | ❌ chưa có gì để nộp |
-| Self-Check §7.9 (7 câu) | dòng 924-931 | ⚠️ đã tự trả lời được phần lớn qua audit; câu "Resource nào tag không đầy đủ" — sau khi áp quyết định mục J sẽ hết vướng |
+| Submission format §7.8 | dòng 908-923 | ✅ `evidence/day3-submission.md` — có mục "Việc còn thiếu và lý do" cho MH9 |
+| Self-Check §7.9 (7 câu) | dòng 924-931 | ✅ trả lời đủ 7 câu trong `evidence/day3-submission.md`, dẫn số liệu đo thật |
 
 ## H. Should-have / Nice-to-have — **không bắt buộc** (§7.4 dòng 840-851)
 
@@ -138,7 +138,8 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 2. **Vị trí Rego + lệnh Conftest**: đặt tại **`infra/policy/terraform/`**, chạy `conftest` từ thư mục `infra/` — khi đó lệnh đúng y hệt §7.5 (`conftest test --policy policy/terraform tfplan.json`, chạy relative từ `infra/`), đồng thời vẫn nằm trong `infra/` theo tinh thần §2.5 (`infra/policies` — khác tên số ít/nhiều nhưng cùng ý định đặt policy trong `infra/`). ⚠️ Đã quyết định, **chưa viết file Rego**.
 3. **Module bootstrap GitHub OIDC tách riêng**: `infra/bootstrap/github-oidc/`, backend S3 cùng bucket khác key (`insighthub/bootstrap/github-oidc.tfstate`), `lifecycle { prevent_destroy = true }` trên OIDC provider — không destroy theo lượt lab vì là resource cấp account dùng chung cả lớp. ✅ Đã viết code + `terraform plan` sạch (10 to add), **chưa apply** (apply ở giai đoạn viết pipeline thật).
 4. **Bỏ `data.http.my_ip`, dùng `var.operator_cidrs` bắt buộc**: để `terraform plan` deterministic giữa local và CI (Acceptance §7.5) — trước đây plan **không** deterministic dù checklist từng đánh dấu ✅ nhầm (xem mục C). Thêm `validation` block chặn `0.0.0.0/0`/`::/0` (phòng thủ thêm, dù checkov không đọc được validation block — xem SPEC.md mục 10, finding CKV_AWS_38 mới). ✅ Đã áp dụng. **Cập nhật 2026-09-25**: đổi tên thành `var.admin_cidrs` (cùng validation, thêm kiểm CIDR hợp lệ + không rỗng) — xem mục O / SPEC.md Mục 2, 12.
-5. **Provider kubernetes dùng `exec` auth**: thay `data.aws_eks_cluster_auth.lab.token` (tĩnh, hết hạn ~15 phút) bằng `exec { command = "aws", args = ["eks", "get-token", ...] }` — tránh lỗi token hết hạn giữa apply dài (EKS+node group từng mất >30 phút thực tế). Rủi ro B (cluster đã bị xóa khi plan/destroy) **không có cách Terraform tự giải quyết** — xử lý bằng quy trình teardown 7 bước bắt buộc (SPEC.md mục 8), không phải code. ✅ Đã áp dụng.
+5. **OIDC provider GitHub: `data` source, KHÔNG phải `resource`** (J.6, quyết định 2026-09-29). AWS chỉ cho 1 provider/URL issuer/account nên nó là tài nguyên cấp account dùng chung; thực tế đã do học viên khác tạo (`owner=DO-NGOC-VINH`). Quản lý bằng `resource` (kể cả sau `terraform import`) sẽ ghi đè tag sở hữu và `lab_expiry` của họ mỗi lần apply — phá đúng dấu vết truy trách nhiệm cleanup mà Guide yêu cầu. Cùng nguyên tắc với ACM cert `*.do2603.click`: **tài nguyên dùng chung thì chỉ tham chiếu, không quản lý**. Đánh đổi đã biết: chủ sở hữu có thể xoá nó bất cứ lúc nào, khi đó plan fail ngay ở data source (fail-fast) thay vì lỗi mơ hồ lúc assume role. ✅ Đã áp dụng.
+6. **Provider kubernetes dùng `exec` auth**: thay `data.aws_eks_cluster_auth.lab.token` (tĩnh, hết hạn ~15 phút) bằng `exec { command = "aws", args = ["eks", "get-token", ...] }` — tránh lỗi token hết hạn giữa apply dài (EKS+node group từng mất >30 phút thực tế). Rủi ro B (cluster đã bị xóa khi plan/destroy) **không có cách Terraform tự giải quyết** — xử lý bằng quy trình teardown 7 bước bắt buộc (SPEC.md mục 8), không phải code. ✅ Đã áp dụng.
 
 ## K. Thứ tự đóng băng source (source freeze) — bắt buộc để `ci_binding`/`verification-source` khớp
 
@@ -323,3 +324,76 @@ Non-root trên K8s: `USER` trong image là **tên** → với `runAsNonRoot: tru
   chủ đích (không apply ra Ingress thiếu cert), nhưng job plan trong CI vì thế
   **bắt buộc có quyền `acm:ListCertificates` + `acm:DescribeCertificate`** —
   kiểm lại policy `gh_plan` khi viết `iac.yml` (`ReadOnlyAccess` đã phủ).
+
+## Q. Lượt AWS 2 (2026-09-29) — apply thật, smoke HTTPS, teardown
+
+### Q.1 Bối cảnh: apply từ local, KHÔNG qua CI
+
+Ghi trung thực để reviewer không hiểu nhầm: hạ tầng lượt này **apply bằng IAM
+user `DE000215` từ máy local**, không qua GitHub Actions, vì Actions bị chặn ở
+cấp tài khoản (billing) đúng lúc chạy — xem MH9 ở mục A. Workflow đã viết đủ và
+PR đã mở; `workflow_dispatch` sẽ chạy được ngay khi billing thông. Lý do này
+cũng ghi trong `evidence/day3-lab2-manifest.json` trường `apply_method_reason`.
+
+### Q.2 Trình tự đã chạy
+
+bootstrap (12 resource) → core (**49 to add**) → platform (3) → 4 add-on →
+push 3 image lên ECR → Helm app → Route53 → smoke HTTPS → fresh plan →
+teardown 8 bước.
+
+Add-on cài đúng thứ tự phụ thuộc: metrics-server, Secrets Store CSI Driver +
+ASCP, rồi AWS Load Balancer Controller (`serviceAccount.create=false`, dùng SA
+do root platform tạo, `vpcId` = output core).
+
+### Q.3 Bốn phát hiện thật trong lượt này
+
+**Q.3.1 — OIDC provider đã thuộc về học viên khác.** `terraform apply` bootstrap
+trả `EntityAlreadyExists`. Import rồi apply như comment cũ hướng dẫn thì plan
+cho thấy sẽ **ghi đè tag `owner=DO-NGOC-VINH`, `lab_expiry`** của họ. Đã chuyển
+sang `data` source — cùng nguyên tắc đã áp cho ACM cert. Xem J.6.
+
+**Q.3.2 — Drift vĩnh viễn ở `rds.force_ssl`.** Fresh plan ngay sau apply ra
+`1 to change`: đây là parameter **static**, AWS luôn lưu `apply_method =
+pending-reboot`, còn provider mặc định gửi `immediate`. Khai tường minh
+`apply_method = "pending-reboot"` → plan sạch. Giá trị vẫn có hiệu lực
+(`ParameterApplyStatus = in-sync`), đã kiểm chứng từ pod trong VPC:
+`sslmode=disable` bị RDS từ chối (`no pg_hba.conf entry ... no encryption`),
+`sslmode=require` vào được với TLSv1.3 — `evidence/day3-rds-tls-proof.txt`.
+**Nếu không chạy fresh plan sau apply thì không bao giờ phát hiện ra.**
+
+**Q.3.3 — Chart ASCP bundle sẵn CSI driver làm subchart.** Cài driver thành
+release Helm riêng gây xung đột ownership (`invalid ownership metadata` trên SA
+`secrets-store-csi-driver`). Cách đúng: chỉ cài ASCP, bật subchart bằng
+`--set 'secrets-store-csi-driver.syncSecret.enabled=true'`.
+
+**Q.3.4 — Endpoint public không có xác thực.** Trong lúc kiểm UI, có tài liệu
+lạ xuất hiện trong `GET /documents` và bị `/chat` trích làm `sources`. Hoá ra
+là chủ repo tự upload thử, nhưng nó phơi ra đúng bản chất: ALB + Ingress không
+kèm lớp xác thực nào, ai biết URL đều upload/đọc/chat được. Xác thực **không
+thuộc phạm vi Day 3** (spec không yêu cầu) nên không thêm vào; cách xử lý là
+xoá tài liệu bằng `DELETE /documents/{id}` (chunk tự xoá theo
+`ON DELETE CASCADE`) và teardown sớm. **Ghi lại đây như một ràng buộc phải giải
+quyết trước khi đưa kiến trúc này đi xa hơn môi trường lab.**
+
+### Q.4 Kết quả đo được
+
+| Hạng mục | Kết quả |
+|---|---|
+| Fresh plan sau apply (core + platform) | **No changes**, `-detailed-exitcode = 0` cả hai |
+| Smoke HTTPS | `/healthz` 200 · `POST /documents` **202 / 0.21s** · `ready` **1.7s** · `POST /chat` 200 + `sources` |
+| IRSA runtime | pod có `AWS_ROLE_ARN=...insighthub-app-role`, Secret do CSI sync 2 key |
+| Tagging | 29 ARN, đủ 8 tag |
+| Image | 3 image ECR kèm digest (`evidence/day3-image-digests.txt`); deploy bằng **digest**, không chỉ tag |
+| Teardown | 8 bước SPEC Mục 8, ALB về 0 trước khi destroy, ACM cert còn nguyên `ISSUED` |
+| Chi phí thực | hạ tầng sống ~1.2h × $0.2154/h ≈ **$0.26** |
+
+### Q.5 Việc CHƯA làm (không che)
+
+- **MH9 pipeline xanh** — chặn billing cấp tài khoản, xem mục A.
+- **`evidence/day3.json` phải để `mode: fixture`** thay vì `real`: artifact
+  `verification-source` (chứa `source_sha256`/`artifact_sha256`) do CI sinh, mà
+  CI chưa chạy được. Ràng buộc source freeze ở mục K vẫn nguyên giá trị — khi
+  billing thông, chạy CI trên commit đã đóng băng rồi mới tạo `day3.json`.
+- **Infracost PR comment** — job `cost-estimate` chưa chạy; dự toán local vẫn có
+  ($157.19/tháng, SPEC Mục 8).
+- **Mở rộng bộ Conftest Rego** (Should-have) — giữ nguyên 19 rule.
