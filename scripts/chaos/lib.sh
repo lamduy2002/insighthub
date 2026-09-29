@@ -18,12 +18,13 @@ log() { printf '[%s] %s\n' "$(now_utc)" "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
 # NFR 8.3 #1: do not inject before >=1h of baseline exists (spec pitfall 8.7).
-# 120 scrapes at 30s = 1h; allow a little slack for missed scrapes.
+# 120 scrapes at 30s = 1h; allow a little slack for missed scrapes. Summed over all series:
+# every pod replacement (rollout, chaos revert) starts a new `up` series with its own count.
 require_baseline() {
   [ "${SKIP_BASELINE_CHECK:-0}" = 1 ] && { log "WARNING: baseline check skipped"; return 0; }
   local n
   n=$(curl -sG "$PROM_URL/api/v1/query" --data-urlencode \
-      'query=count_over_time(up{job="insighthub-api"}[3h])' \
+      'query=sum(count_over_time(up{job="insighthub-api"}[3h]))' \
       | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(int(float(r[0]["value"][1])) if r else 0)') \
       || die "Prometheus unreachable at $PROM_URL"
   [ "$n" -ge 115 ] || die "baseline too short: $n scrapes of up{job=insighthub-api} (~$((n/2)) min); need >=115 (1h). Use --skip-baseline-check to override knowingly."

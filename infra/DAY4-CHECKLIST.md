@@ -20,11 +20,11 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 | MH3 | Grafana dashboard ≥ 9 panels | ✅ 12 panel, import vào Grafana (uid `insighthub-red`), mọi panel có data qua `/api/ds/query`. File `observability/grafana-dashboards/insighthub-red.json`. Còn thiếu: ảnh chụp màn hình (làm tay) |
 | MH4 | Recording rules cho anomaly bands | ✅ `kubectl get prometheusrule -n monitoring insighthub-anomaly`: 17 recording rules (SLI + 3 band × avg/stddev/upper), 20/20 rule health `ok` |
 | MH5 | Alert rules cho 3 anomaly (`promtool check rules`) | ✅ `promtool check rules` SUCCESS (20 rules), `promtool test rules` SUCCESS (5 case, chạy 3 lần đều exit 0). Chưa fire thật (chờ incident) |
-| MH6 | Alertmanager → Slack | 🔸 cấu hình sẵn + validate (`amtool check-config` SUCCESS, routing test đúng), **chưa apply**: `observability/monitoring/apply-alertmanager-slack.sh`. **CẦN USER**: webhook |
-| MH7 | Incident #1 LLM latency spike + RCA | ❌ (sau baseline ≥1h) |
-| MH8 | Incident #2 queue backlog + RCA | ❌ |
-| MH9 | Incident #3 error burst + RCA | ❌ |
-| MH10 | RCA cite metric + timestamp | ❌ |
+| MH6 | Alertmanager → Slack | ✅ FIRING + RESOLVED của test alert tới `#alerts` (người dùng đã chụp ảnh), và cả 3 alert incident đều được Alertmanager gửi Slack (`alertmanager_notifications_total{integration="slack"}` = 8 sau incident 3 gồm cả thông báo resolved, `alertmanager_notifications_failed_total` = 0). Ảnh chụp: làm tay |
+| MH7 | Incident #1 LLM latency spike + RCA | ✅ `InsightHubLLMLatencyAnomaly` FIRING 19:23:51Z (p95 4.86s > band 1.24s), resolved 19:32:36Z. `evidence/incident-1.json`, RCA subagent độc lập: **đúng** |
+| MH8 | Incident #2 queue backlog + RCA | ✅ `InsightHubQueueDepthAnomaly` FIRING 19:46:51Z (23 > band 5), resolved ≤19:56:36Z. `evidence/incident-2.json`: **đúng** (không xác định được ai scale worker, tự ghi `unverified`) |
+| MH9 | Incident #3 error burst + RCA | ✅ `InsightHubErrorRateAnomaly` FIRING 20:10:21Z (0.434 > band 0.05), resolved 20:16:23Z. `evidence/incident-3.json`: **đúng nguyên nhân gốc, sai nhẹ cơ chế** ("pod bị xoá" thay vì StatefulSet scale 0) |
+| MH10 | RCA cite metric + timestamp | ✅ 43 sample (17+12+14) lấy nguyên từ `harvest-samples.py`, kiểm bằng logic `verify.py:602-633`: 43/43 khớp `query_range`; mỗi hypothesis có dạng `metric{labels} = giá trị @ timestamp` |
 | MH11 | Quiz 5 câu ≥ 4/5 | ❌ **CẦN USER** |
 | MH12 | MLOps overview notes 4 block | 🔸 nháp `observability/mlops-overview-notes.md` (người học phải đọc và viết lại bằng lời mình; spec không định nghĩa "4 block", cách chia ghi ở đầu file) |
 
@@ -36,7 +36,7 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 | 2 | Resource limits Prometheus pod | ✅ 200m/512Mi → 1000m/1536Mi |
 | 3 | Recording rules cho expensive query | ✅ band 1h subquery được record 30s/lần |
 | 4 | Retention 15 ngày | ✅ `retention: 15d` |
-| 5 | AI RCA prompt "evidence-first" | ❌ |
+| 5 | AI RCA prompt "evidence-first" | ✅ `observability/rca-prompt.md`, dùng cho cả 3 RCA |
 
 ## C. Acceptance 8.5 — 12 dòng (dòng 1023-1035)
 
@@ -47,9 +47,9 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 | 3 | Dashboard 9+ panels, no "No data" | ✅ 12 panel, 0 panel No data (đã kiểm qua Grafana API) |
 | 4 | `kubectl get prometheusrule -n monitoring -o yaml` → rules | ✅ |
 | 5 | `promtool check rules anomaly-rules.yaml` → SUCCESS | ✅ (file: `observability/prometheus-rules/anomaly-rules.yaml`) |
-| 6 | Test alert → Slack `#alerts` | ❌ cần webhook |
-| 7 | `./scripts/chaos/inject-llm-latency.sh` → alert fires in 5min | 🔸 script có (chưa chạy thật: guard baseline ≥1h chặn); kỳ vọng alert nổ ~3' sau inject (`for: 2m`) |
-| 8-10 | `incident-1/2/3.json` có evidence + timestamp | ❌ |
+| 6 | Test alert → Slack `#alerts` | ✅ FIRING + RESOLVED tới Slack |
+| 7 | `./scripts/chaos/inject-llm-latency.sh` → alert fires in 5min | ✅ chạy thật: inject 19:20:29Z → FIRING 19:23:51Z (**3 phút 22 giây**) |
+| 8-10 | `incident-1/2/3.json` có evidence + timestamp | ✅ `evidence/incident-{1,2,3}.json` (không nằm trong `rca-reports/` như spec ghi) |
 | 11 | `mlops-overview-notes.md` 4 block | ❌ |
 | 12 | Quiz 5/5 | ❌ cần user |
 
@@ -75,7 +75,7 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 | 4 | Queue depth | `redis_key_size{key=~"arq:queue.*"}` / list length | redis_exporter | cần `--check-keys` |
 | 5 | Token usage (**ước lượng, fixture mode**) | `sum(rate(insighthub_embedding_estimated_tokens_total[5m]))` | api | LLM tokens thật = 0 ở fixture |
 | 6 | Latency p95 (LLM) | `histogram_quantile(0.95, …insighthub_llm_call_latency_seconds_bucket)` | api | ✅ |
-| 7 | Cost (**ước lượng, fixture mode**) | recording rule `insighthub:embedding_cost_usd:rate5m` | rules | đơn giá cố định, ghi trong rule |
+| 7 | Cost (**ước lượng, fixture mode**) | recording rule `insighthub:embedding_est_cost_usd:per_hour` | rules | đơn giá cố định, ghi trong rule |
 | 8 | Pod resources | `container_memory_working_set_bytes`, `container_cpu_usage_seconds_total` (ns insighthub-local) | cAdvisor | gồm pod worker |
 | 9 | Deploy annotations | `kube_deployment_status_observed_generation`, `kube_pod_start_time` | KSM | + Grafana annotation |
 
@@ -126,3 +126,16 @@ promtool 5' · exporter+SM 30' · chaos scripts 40' · rules+unit tests 60' · d
 - **Tiện ích**: `scripts/chaos/harvest-samples.py` lấy sample nguyên từ Prometheus (đã đối chiếu với đúng logic `verify.py:615-633`: 4/4 chấp nhận); `observability/rca-prompt.md` là prompt evidence-first.
 - **Credential Grafana**: mật khẩu cũ `insighthub` đã lỡ commit (còn trong lịch sử git, bản public) nên đã **thay**: Secret `monitoring/grafana-admin` với mật khẩu ngẫu nhiên (`create-grafana-admin-secret.sh`), values dùng `grafana.admin.existingSecret`, đã xác nhận mật khẩu cũ trả 401. Lấy mật khẩu mới: `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`. Quét toàn bộ lịch sử git không thấy AWS key/token/private key/webhook nào; còn lại là mật khẩu Postgres lab `insighthub` ở `docker-compose.yml` và `infra/helm/insighthub-local-deps/values.yaml` (chỉ local, chưa đổi vì cần redeploy DB).
 - **Grafana không có persistence**: dashboard nạp qua ConfigMap sidecar (`observability/grafana-dashboards/apply.sh`), không import tay qua API (mất khi pod restart). Strategy `Recreate` vì node kind 2 CPU không đủ chỗ cho pod Grafana thứ hai khi rolling update.
+
+## K. Kết quả chạy 3 incident (2026-09-29 UTC)
+
+| # | Fault tiêm | Alert firing (từ lúc inject) | Resolved | RCA của subagent độc lập |
+|---|---|---|---|---|
+| 1 | sleep 4s trong `generate()` (ConfigMap sitecustomize, rollout api) | 3'22" | 19:32:36Z | đúng, kể cả cơ chế (fault tự gắn nhãn `CHAOS_*` trong pod spec) |
+| 2 | worker scale 0 + 40 upload | 3'04" | ≤19:56:36Z | đúng, tự nhận không biết ai scale |
+| 3 | Redis scale 0 (POST /documents → 500) | 3'04" | 20:16:23Z | đúng nguyên nhân gốc; sai nhẹ cơ chế |
+
+- Quy trình mỗi incident: inject → alert firing (đã báo người dùng chụp Slack + Grafana) → tự revert → resolved → RCA bằng subagent mới không biết lỗi (chỉ đọc prompt + MCP + harvest script) → tôi đối chiếu rồi mới thêm `injected_fault`/`injected_fault_evaluation`; `hypotheses`, `ruled_out`, `samples` không bị sửa. Nghỉ ≥10' giữa các incident.
+- **Đã sửa giữa chừng**: (1) `rca-prompt.md` quy tắc 5 mâu thuẫn với verifier (baseline phải nằm trong cửa sổ vì `samples` bắt buộc nằm trong `[started_at, ended_at]`); (2) guard baseline trong `lib.sh` lấy nhầm series đầu tiên sau khi pod api đổi (chặn incident 2 lần đầu) — giờ cộng mọi series.
+- **Drift so với chart (không nằm trong git)**: Deployment `insighthub-api` đặt `maxSurge: 0, maxUnavailable: 1` bằng `kubectl patch` vì node 2 CPU đã 99% CPU requests nên pod api thứ hai không schedule được khi rollout. Hệ quả: mỗi rollout/rollback api làm api mất ~30 giây (available replicas = 0), có trong dữ liệu RCA #1. Helm upgrade tiếp theo của chart `insighthub` sẽ ghi đè patch này.
+- **Hạn "tươi" của RCA**: `verify.py:605-606` yêu cầu `started_at`/`ended_at` ≤24h. Incident 1 bắt đầu cửa sổ 2026-09-29T19:05:29Z nên **hết tươi lúc 2026-09-30T19:05Z (02:05 ngày 01/10 giờ máy)**. Chạy lại verify sau mốc đó sẽ INCOMPLETE dù mọi thứ vẫn đúng; output verify đã lưu trong `evidence/` là bằng chứng.

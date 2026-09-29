@@ -8,7 +8,9 @@ Nguyên tắc vận hành:
   đọc lại đề bài chứ không phải điều tra. Sau khi có RCA, người làm mới đối chiếu với thứ đã tiêm và ghi `injected_fault`.
 - **AI không gõ số liệu vào `samples`.** Số liệu lấy nguyên từ Prometheus bằng `scripts/chaos/harvest-samples.py`
   (cùng lời gọi `query_range` với `scripts/verify.py:622-633`).
-- Cửa sổ incident lấy từ `evidence/chaos-<tên>-window.json` do script chaos ghi.
+- Cửa sổ điều tra = 15 phút baseline + sự cố + hồi phục đến khi alert resolved, tính từ `evidence/chaos-<tên>-window.json`
+  (`started_at` của prompt = `started_at` của file trừ 15 phút; `ended_at` = lúc alert resolved). Không nói cho AI thời điểm
+  bắt đầu sự cố thật.
 
 ## Khối prompt
 
@@ -36,8 +38,9 @@ QUY TẮC BẰNG CHỨNG (vi phạm bất kỳ điều nào thì kết quả kh�
    là "không có dữ liệu": ghi vào `no_data`, tuyệt đối không dẫn nó làm bằng chứng và không bịa tên metric.
 4. Cấm suy đoán không có bằng chứng: không dùng "có thể", "chắc là", "thường do" như một kết luận. Điều chưa kiểm
    chứng được ghi vào `unverified` kèm điều cần đo để kiểm chứng.
-5. So sánh với baseline: mỗi hiện tượng bất thường phải đặt cạnh giá trị baseline TRƯỚC cửa sổ sự cố (ít nhất 15 phút
-   trước started_at), cùng metric, cùng labels.
+5. So sánh với baseline: [started_at, ended_at] là cửa sổ điều tra và bắt đầu bằng một đoạn baseline trước sự cố
+   (verifier bắt mọi `samples` nằm TRONG cửa sổ nên baseline phải nằm trong cửa sổ). Mỗi hiện tượng bất thường phải đặt
+   cạnh giá trị baseline lấy ở phần đầu cửa sổ, cùng metric, cùng labels. Bạn phải tự xác định thời điểm sự cố bắt đầu.
 6. Nguyên nhân gốc cần >= 2 tín hiệu độc lập (ví dụ: một metric ứng dụng + một tín hiệu K8s như restart, event, số
    replica, CPU throttling). Chỉ có 1 tín hiệu thì gắn nhãn "giả thuyết chưa xác nhận" và confidence <= 0.5.
 7. Loại trừ: nêu ít nhất 2 giả thuyết thay thế đã kiểm tra và bị bác, mỗi cái kèm bằng chứng bác bỏ (mục
