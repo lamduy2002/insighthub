@@ -1,0 +1,121 @@
+# promtool unit tests for anomaly-rules.yaml (run: promtool test rules anomaly-rules_test.yaml).
+# Timeline per anomaly case, scrape/eval step 30s: steps 0-129 (65 min) are clean baseline,
+# the fault starts at step 130, eval_time 72m is ~6.5 min into the fault.
+rule_files:
+  - anomaly-rules.yaml
+evaluation_interval: 30s
+tests:
+  # ---- Recording rules: exact values ----
+  - interval: 30s
+    input_series:
+      - series: 'insighthub_http_requests_total{method="GET",endpoint="/documents",status="200"}'
+        values: '0+30x100'
+      - series: 'insighthub_embedding_estimated_tokens_total{provider="fixture",input_type="document"}'
+        values: '0+3000x100'
+    promql_expr_test:
+      - expr: insighthub:http_requests:rate5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'insighthub:http_requests:rate5m'
+            value: 1
+      - expr: insighthub:http_error_ratio:rate5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'insighthub:http_error_ratio:rate5m'
+            value: 0
+      # 100 tokens/s * 3600 s * 0.02 USD / 1e6 tokens
+      - expr: insighthub:embedding_est_cost_usd:per_hour
+        eval_time: 10m
+        exp_samples:
+          - labels: 'insighthub:embedding_est_cost_usd:per_hour'
+            value: 0.0072
+
+  # ---- Incident 3: 5xx burst on POST /documents ----
+  - interval: 30s
+    input_series:
+      - series: 'up{job="insighthub-api"}'
+        values: '1x200'
+      - series: 'insighthub_http_requests_total{method="GET",endpoint="/documents",status="200"}'
+        values: '0+20x190'
+      - series: 'insighthub_http_requests_total{method="POST",endpoint="/documents",status="500"}'
+        values: '0x129 0+10x61'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: InsightHubErrorRateAnomaly
+        exp_alerts: []
+      - eval_time: 72m
+        alertname: InsightHubErrorRateAnomaly
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              incident: error-burst
+            exp_annotations:
+              summary: HTTP 5xx ratio is above its statistical band
+              description: '5xx ratio 0.333 is above avg_1h + max(3*stddev_1h, 0.05).'
+
+  # ---- Incident 2: ARQ queue backlog ----
+  - interval: 30s
+    input_series:
+      - series: 'up{job="insighthub-api"}'
+        values: '1x200'
+      - series: 'redis_key_size{key="arq:queue"}'
+        values: '0x129 0+3x61'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: InsightHubQueueDepthAnomaly
+        exp_alerts: []
+      - eval_time: 72m
+        alertname: InsightHubQueueDepthAnomaly
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              incident: queue-backlog
+            exp_annotations:
+              summary: Ingestion queue depth is above its statistical band
+              description: 'ARQ queue depth 42 is above avg_1h + max(3*stddev_1h, 5).'
+
+  # ---- Incident 1: LLM latency moves from the <=0.25s bucket to the (0.25s, 5s] bucket ----
+  - interval: 30s
+    input_series:
+      - series: 'up{job="insighthub-api"}'
+        values: '1x200'
+      - series: 'insighthub_llm_call_latency_seconds_bucket{le="0.25"}'
+        values: '0+5x129 645x61'
+      - series: 'insighthub_llm_call_latency_seconds_bucket{le="5"}'
+        values: '0+5x129 650+5x61'
+      - series: 'insighthub_llm_call_latency_seconds_bucket{le="+Inf"}'
+        values: '0+5x129 650+5x61'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: InsightHubLLMLatencyAnomaly
+        exp_alerts: []
+      - eval_time: 72m
+        alertname: InsightHubLLMLatencyAnomaly
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              incident: llm-latency
+            exp_annotations:
+              summary: LLM call p95 latency is above its statistical band
+              description: 'LLM p95 latency 4.76s is above avg_1h + max(3*stddev_1h, 1s).'
+
+  # ---- NFR 8.3 #1: error burst (from 45 min) with only ~30 min of up{} history => must NOT fire ----
+  - interval: 30s
+    input_series:
+      - series: 'up{job="insighthub-api"}'
+        values: '1x60'
+      - series: 'insighthub_http_requests_total{method="GET",endpoint="/documents",status="200"}'
+        values: '0+20x190'
+      - series: 'insighthub_http_requests_total{method="POST",endpoint="/documents",status="500"}'
+        values: '0x89 0+10x101'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: InsightHubErrorRateAnomaly
+        exp_alerts: []
+    promql_expr_test:
+      # the anomaly itself IS present (ratio above band) - only the baseline guard suppresses the alert
+      - expr: round(insighthub:http_error_ratio:rate5m > insighthub:http_error_ratio:upper_band, 0.001)
+        eval_time: 50m
+        exp_samples:
+          - labels: '{}'
+            value: 0.333

@@ -1,0 +1,93 @@
+# Day 4 MH4/MH5: recording rules (SLIs + statistical anomaly bands) and 3 anomaly alerts.
+#
+# Band = avg_1h + max(3 * stddev_1h, floor). The floor exists because the lab baseline is
+# nearly flat (stddev ~ 0), where a pure 3-sigma band would fire on any blip.
+# The 1h window ends 10 min ago (offset 10m) so an ongoing incident cannot inflate its own
+# band (without it, a 7 min fault made avg+3*stddev exceed the fault level itself).
+# Bands are computed from RAW metrics with a 1h subquery, not from the recorded SLI series,
+# so they are valid as soon as 1h of raw scrapes exists (not 1h after this file was loaded).
+# Every alert also requires >=115 scrapes (~1h) of up{job="insighthub-api"} (NFR 8.3 #1).
+#
+# Fixed illustrative price for the estimated-cost panel: 0.02 USD per 1M tokens. The lab
+# runs fixture mode, so no provider bills this: it is an estimate, not an invoice.
+groups:
+  - name: insighthub-anomaly
+    rules:
+      # ---- SLIs (RED) ----
+      - record: insighthub:http_requests:rate5m
+        expr: sum(rate(insighthub_http_requests_total[5m]))
+      - record: insighthub:http_errors_5xx:rate5m
+        expr: sum(rate(insighthub_http_requests_total{status=~"5.."}[5m])) or vector(0)
+      - record: insighthub:http_error_ratio:rate5m
+        expr: insighthub:http_errors_5xx:rate5m / clamp_min(insighthub:http_requests:rate5m, 1e-9)
+      - record: insighthub:rag_query_latency_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(insighthub_rag_query_latency_seconds_bucket[5m]))) >= 0
+      - record: insighthub:llm_call_latency_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(insighthub_llm_call_latency_seconds_bucket[5m]))) >= 0
+      # ARQ default queue is the sorted set arq:queue (absent when empty; redis_exporter reports 0).
+      - record: insighthub:queue_depth:max
+        expr: max(redis_key_size{key="arq:queue"})
+      # ---- Estimated token usage and cost (fixture mode) ----
+      - record: insighthub:embedding_est_tokens:rate5m
+        expr: sum(rate(insighthub_embedding_estimated_tokens_total[5m]))
+      - record: insighthub:embedding_est_cost_usd:per_hour
+        expr: insighthub:embedding_est_tokens:rate5m * 3600 * 0.02 / 1e6
+
+      # ---- Anomaly bands: LLM latency p95 (seconds), floor 1s ----
+      - record: insighthub:llm_call_latency_seconds:p95_avg1h
+        expr: avg_over_time((histogram_quantile(0.95, sum by (le) (rate(insighthub_llm_call_latency_seconds_bucket[5m]))) >= 0)[1h:1m] offset 10m)
+      - record: insighthub:llm_call_latency_seconds:p95_stddev1h
+        expr: stddev_over_time((histogram_quantile(0.95, sum by (le) (rate(insighthub_llm_call_latency_seconds_bucket[5m]))) >= 0)[1h:1m] offset 10m)
+      - record: insighthub:llm_call_latency_seconds:p95_upper_band
+        expr: insighthub:llm_call_latency_seconds:p95_avg1h + clamp_min(3 * insighthub:llm_call_latency_seconds:p95_stddev1h, 1)
+
+      # ---- Anomaly bands: queue depth (jobs), floor 5 ----
+      - record: insighthub:queue_depth:avg1h
+        expr: avg_over_time(max(redis_key_size{key="arq:queue"})[1h:1m] offset 10m)
+      - record: insighthub:queue_depth:stddev1h
+        expr: stddev_over_time(max(redis_key_size{key="arq:queue"})[1h:1m] offset 10m)
+      - record: insighthub:queue_depth:upper_band
+        expr: insighthub:queue_depth:avg1h + clamp_min(3 * insighthub:queue_depth:stddev1h, 5)
+
+      # ---- Anomaly bands: 5xx error ratio (0..1), floor 0.05 ----
+      - record: insighthub:http_error_ratio:avg1h
+        expr: avg_over_time(((sum(rate(insighthub_http_requests_total{status=~"5.."}[5m])) or vector(0)) / clamp_min(sum(rate(insighthub_http_requests_total[5m])), 1e-9))[1h:1m] offset 10m)
+      - record: insighthub:http_error_ratio:stddev1h
+        expr: stddev_over_time(((sum(rate(insighthub_http_requests_total{status=~"5.."}[5m])) or vector(0)) / clamp_min(sum(rate(insighthub_http_requests_total[5m])), 1e-9))[1h:1m] offset 10m)
+      - record: insighthub:http_error_ratio:upper_band
+        expr: insighthub:http_error_ratio:avg1h + clamp_min(3 * insighthub:http_error_ratio:stddev1h, 0.05)
+
+      # ---- Alerts (same group as the records they read: rules in a group run in order) ----
+      - alert: InsightHubLLMLatencyAnomaly
+        expr: |
+          insighthub:llm_call_latency_seconds:p95_5m > insighthub:llm_call_latency_seconds:p95_upper_band
+          and on() (count_over_time(up{job="insighthub-api"}[3h]) >= 115)
+        for: 2m
+        labels:
+          severity: warning
+          incident: llm-latency
+        annotations:
+          summary: LLM call p95 latency is above its statistical band
+          description: 'LLM p95 latency {{ $value | printf "%.2f" }}s is above avg_1h + max(3*stddev_1h, 1s).'
+      - alert: InsightHubQueueDepthAnomaly
+        expr: |
+          insighthub:queue_depth:max > insighthub:queue_depth:upper_band
+          and on() (count_over_time(up{job="insighthub-api"}[3h]) >= 115)
+        for: 2m
+        labels:
+          severity: warning
+          incident: queue-backlog
+        annotations:
+          summary: Ingestion queue depth is above its statistical band
+          description: 'ARQ queue depth {{ $value | printf "%.0f" }} is above avg_1h + max(3*stddev_1h, 5).'
+      - alert: InsightHubErrorRateAnomaly
+        expr: |
+          insighthub:http_error_ratio:rate5m > insighthub:http_error_ratio:upper_band
+          and on() (count_over_time(up{job="insighthub-api"}[3h]) >= 115)
+        for: 2m
+        labels:
+          severity: critical
+          incident: error-burst
+        annotations:
+          summary: HTTP 5xx ratio is above its statistical band
+          description: '5xx ratio {{ $value | printf "%.3f" }} is above avg_1h + max(3*stddev_1h, 0.05).'
