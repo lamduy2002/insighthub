@@ -10,51 +10,50 @@ Ngày nộp: 29/09/2026 · Học viên: lamduy2002 (DO2603) · Branch `day3-terr
 Day 3 - Lam Duy
 
 ✓ Terraform module: https://github.com/lamduy2002/insighthub/tree/day3-terraform/infra
-✗ Pipeline run (green): CHƯA CÓ — xem "Việc còn thiếu" bên dưới
-✓ checkov scan report: 687 passed / 0 failed / 56 skipped, exit 0 (chạy local;
-  job security-scan trong iac.yml upload artifact `checkov-report` dạng JUnit XML)
-✗ Infracost report (PR comment): CHƯA CÓ — job cost-estimate chưa chạy được;
-  dự toán chạy local: $157.19/tháng (infra/SPEC.md Mục 8)
+✓ Pipeline run (green): https://github.com/lamduy2002/insighthub/actions/runs/36543176882
+   fmt · lint · security-scan · policy-check · plan · cost-estimate ·
+   verification-source = 7/7 success; apply = skipped (dung thiet ke tren PR)
+✓ checkov scan report: artifact `checkov-report` (JUnit XML) cua chinh run tren.
+   Local: 684 passed / 0 failed / 59 skipped, exit 0.
+   Ban render dev rieng: 336 passed / 0 failed / 27 skipped, exit 0.
+✓ Infracost report: job cost-estimate success trong run tren.
+   Du toan: $157.19/thang (~$0.2154/gio), chi tiet trong infra/SPEC.md Muc 8.
 ✓ InsightHub live URL: https://insighthub-lamduy.do2603.click
-  (đã chạy thật trên EKS, đã teardown — xem evidence/day3-teardown.txt)
-✓ Smoke test screenshots (4 ảnh, chụp từ terminal + Edge):
+  (da chay that tren EKS, da teardown - evidence/day3-teardown.txt)
+✓ Smoke test screenshots (4 anh: terminal + Edge):
    - GET /healthz → 200
-   - POST /documents → 202
+   - POST /documents → 202 (0.21s)
    - POST /chat → answer + sources
-   - Web UI trên Edge (upload + chat)
-  Output văn bản: evidence/day3-smoke-https.txt
+   - Web UI tren Edge (upload + chat)
+  Output van ban: evidence/day3-smoke-https.txt
+✓ verify-day-3.sh: PASS day3 (scope=partial-runtime-contract,
+  runtime_verified=true), exit 0 - evidence/day3-verify-output.txt
+✓ evidence/day3.json: mode REAL, source_sha256 va artifact_sha256 khop tuyet doi
+  voi artifact verification-source do CI sinh
 ```
 
 **Pull Request**: https://github.com/lamduy2002/insighthub/pull/2 —
 `[Day 3] IaC + pipeline: Terraform core/platform, policy gates, Helm chart`
 
-### Việc còn thiếu và lý do (không che)
+### Ghi chú trung thực
 
-**Pipeline run xanh (MH9) chưa đạt.** Workflow `.github/workflows/iac.yml` đã
-viết đủ 7 job đúng tên MH8 và PR đã mở, nhưng **GitHub Actions bị chặn ở cấp
-tài khoản**: cả 8 job fail sau 6 giây, chưa job nào được cấp runner
-(`runner` rỗng trong API), annotation nguyên văn:
+**MH9 đã đạt, nhưng không phải ngay từ đầu.** Lần chạy đầu tiên cả 8 job fail
+sau 6 giây vì **GitHub Actions bị chặn ở cấp tài khoản** (thanh toán) — không
+job nào được cấp runner, và `starter.yml` của giảng viên cũng fail y hệt cùng
+lúc, chứng tỏ không phải lỗi workflow. Sau khi chủ repo gỡ chặn, pipeline còn
+đỏ thêm 3 lần nữa vì 3 lỗi thật khác nhau mà local không phát hiện được
+(chi tiết: `infra/DAY3-CHECKLIST.md` mục Q.6).
 
-> *"The job was not started because recent account payments have failed or your
-> spending limit needs to be increased. Please check the 'Billing & plans'
-> section in your settings"*
+**Hạ tầng AWS lượt 2 apply từ LOCAL, không qua CI.** Lúc đó Actions còn bị
+chặn, đợi thì hết giờ lab. Job `apply` đã viết và đã xác minh **skip đúng**
+trên `pull_request`, nhưng chưa có lượt nào chạy `apply` thật qua
+`workflow_dispatch` — muốn chứng minh phải dựng lại hạ tầng một lượt nữa.
+Không sửa lại mô tả này cho đẹp: đó là điều đã thực sự xảy ra.
 
-Đã chẩn đoán chỉ-đọc, loại trừ nguyên nhân từ phía code:
-
-| Kiểm tra | Kết quả |
-|---|---|
-| `runs-on` của 9 job | đều `ubuntu-24.04` — runner chuẩn, miễn phí cho repo public |
-| `labels` thực tế trong API | `["ubuntu-24.04"]`, không larger runner / self-hosted / macOS |
-| `/actions/permissions` của repo | `enabled: true`, `allowed_actions: all` |
-| Workflow `starter.yml` (của giảng viên, có sẵn) | **fail y hệt cùng lúc** |
-
-Bằng chứng cuối cùng là quyết định: workflow không do tôi viết cũng fail →
-chặn nằm ở tài khoản, không ở file YAML. Không có thay đổi code nào gỡ được.
-
-**Hệ quả dây chuyền**: `verification-source` (artifact chứa `source-manifest.json`
-với `source_sha256`/`artifact_sha256`) do CI sinh ra. Không chạy được CI thì
-`evidence/day3.json` phải để `mode: fixture` thay vì `real` — chi tiết trong
-chính file đó.
+**Hai KMS key còn ở `PendingDeletion`** (06/10 và 23/10). `terraform destroy`
+chỉ *schedule* xoá KMS key chứ không xoá ngay, và không rút ngắn được cửa sổ
+sau khi đã schedule. Cái hết hạn 23/10 sót từ lượt lab 1. Đã ghi trong
+`evidence/day3-lab2-manifest.json`.
 
 ---
 

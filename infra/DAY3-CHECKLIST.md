@@ -21,7 +21,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | MH6 | IRSA: ServiceAccount + IAM Role binding | dòng 830, verify bằng `kubectl describe sa insighthub` | ✅ **xong thật, chứng minh ở mức runtime** — `kubectl describe sa insighthub -n insighthub-dev` → annotation `eks.amazonaws.com/role-arn: ...insighthub-app-role`; pod thật inject `AWS_ROLE_ARN=...insighthub-app-role` + `AWS_WEB_IDENTITY_TOKEN_FILE` (KHÔNG phải node role); và Secret `insighthub-app-secrets` được CSI sync ra 2 key → pod đã **thực sự dùng IRSA đọc được Secrets Manager**. Bằng chứng `evidence/day3-mh3-mh6.txt` |
 | MH7 | `.github/workflows/iac.yml` | dòng 831 | ✅ đã viết — 7 job + `verification-source`, action pin theo commit SHA, conftest tải kèm verify sha256. Bootstrap OIDC **đã apply thật** (12 resource), 4 repo variable + 2 GitHub Environment (`production` có required reviewer) đã tạo |
 | MH8 | Pipeline jobs fmt→lint→scan→policy→plan→cost→apply | dòng 832 | ✅ đủ 7 job **đúng tên**: `fmt`, `lint`, `security-scan`, `policy-check`, `plan`, `cost-estimate`, `apply`. Saved plan qua S3 SSE-KMS (không phải artifact GitHub), `apply` verify sha256 trước khi apply đúng file đã review |
-| MH9 | Pipeline green trên PR | dòng 833 | 🔄 **đang xác minh lại** — xem mục Q.6. Lần chạy đầu (run `36532890593`, `36536653766`) fail vì **GitHub Actions bị chặn ở cấp tài khoản**: 8/8 job fail sau 6s, chưa job nào được cấp runner, annotation *"recent account payments have failed or your spending limit needs to be increased"*. Đã chẩn đoán chỉ-đọc và loại trừ nguyên nhân từ code (mọi `runs-on` là `ubuntu-24.04` — runner chuẩn miễn phí cho repo public; `/actions/permissions` = `enabled: true`; **`starter.yml` của giảng viên cũng fail y hệt cùng lúc**). Chủ repo đã gỡ chặn billing lúc ~15:15 (+07) và pipeline chạy lại được — kết quả cuối ghi ở Q.6 |
+| MH9 | Pipeline green trên PR | dòng 833 | ✅ **ĐẠT** — run [36543176882](https://github.com/lamduy2002/insighthub/actions/runs/36543176882) trên PR #2: `fmt` · `lint` · `security-scan` · `policy-check` · `plan` · `cost-estimate` · `verification-source` **7/7 success**, `apply` **skipped** (đúng thiết kế: không bao giờ apply từ `pull_request`). Đường đến đây mất 4 lần sửa, mỗi lần CI lộ một lỗi thật local không thấy — xem Q.6 |
 | MH10 | InsightHub Helm deploy | dòng 834 | ✅ **xong cả local lẫn AWS**. AWS (2026-09-29): `helm upgrade --install` chart `insighthub` lên ns `insighthub-dev` với `values-dev.yaml` + image digest ECR + `certificate_arn` + `--set-file migration.initSql`; 4/4 pod Running, HPA đọc CPU, Ingress cấp ALB. Chart `insighthub-local-deps` **cố ý KHÔNG cài lên EKS** (Postgres=RDS, Redis=ElastiCache). Local trước đó — 2 chart ở `infra/helm/` (`insighthub`, `insighthub-local-deps`), đã `helm upgrade` thật trên kind `insighthub-lab` ns `insighthub-local` (2026-09-29): 5/5 pod Running, smoke curl `/healthz` 200 · `/readyz` 200 · `POST /documents` 202 · status `ready` <2s · `POST /chat` 200 kèm `sources`; UI kiểm trên trình duyệt OK. Trên EKS chưa deploy (cần apply core+platform trước). Theo Guide local-first: **local PASS không tính là hoàn thành AWS** |
 | MH11 | Smoke test upload+chat | dòng 835 | ✅ **xong trên HTTPS domain thật** `https://insighthub-lamduy.do2603.click`: `/healthz` 200 · `POST /documents` (PDF có text) **202 trong 0.21s** (SLA <1.0s) · status `ready` sau **1.7s** (SLA <30s) · `POST /chat` 200 kèm `sources` trích đúng PDF vừa upload. Thêm: HTTP→HTTPS 301, `/` (web) 200, `/metrics` 404 (không public). Output `evidence/day3-smoke-https.txt` |
 | MH12 | `tflint --recursive` no warnings | dòng 836 | ✅ xong — đã chạy lại trên cả module chính + `infra/bootstrap/github-oidc/`: 0 errors, 0 warnings |
@@ -112,7 +112,7 @@ Không quy định cứng định dạng trong code — chỉ đòi file thật,
 | Branch `day3-terraform` | §4.3 dòng 380 | ✅ đúng branch hiện tại |
 | PR title `[Day 3] <mô tả>` | §4.3 dòng 386-388 | ✅ PR #2 — `[Day 3] IaC + pipeline: Terraform core/platform, policy gates, Helm chart` |
 | `ai-prompts/day3.md` ≥3 prompt, đúng format (Host/Version/Context/Time/Prompt/Why/What changed) | §4.4 dòng 396-422 | ✅ **4 prompt nguyên văn** từ phiên 29/09/2026, đủ 7 trường. Không chép prompt pack giảng viên |
-| `verify-day-3.sh` PASS | §4.2 dòng 362-372 | ❌ chưa chạy được — sẽ FAIL ở bước `run_tests` (thiếu `tests/milestones/day3/`) và các bước sau |
+| `verify-day-3.sh` PASS | §4.2 dòng 362-372 | ✅ **PASS** — `PATH=$PWD/venv/bin:$PATH bash scripts/verify-day-3.sh --ci-repo lamduy2002/insighthub --ci-run-id <run xanh>` → `PASS day3 (scope=partial-runtime-contract, runtime_verified=true)`, exit 0. Output: `evidence/day3-verify-output.txt` |
 | Submission format §7.8 | dòng 908-923 | ✅ `evidence/day3-submission.md` — có mục "Việc còn thiếu và lý do" cho MH9 |
 | Self-Check §7.9 (7 câu) | dòng 924-931 | ✅ trả lời đủ 7 câu trong `evidence/day3-submission.md`, dẫn số liệu đo thật |
 
@@ -420,10 +420,48 @@ quyết trước khi đưa kiến trúc này đi xa hơn môi trường lab.**
 ### Q.5 Việc CHƯA làm (không che)
 
 - **MH9 pipeline xanh** — chặn billing cấp tài khoản, xem mục A.
-- **`evidence/day3.json` phải để `mode: fixture`** thay vì `real`: artifact
-  `verification-source` (chứa `source_sha256`/`artifact_sha256`) do CI sinh, mà
-  CI chưa chạy được. Ràng buộc source freeze ở mục K vẫn nguyên giá trị — khi
-  billing thông, chạy CI trên commit đã đóng băng rồi mới tạo `day3.json`.
-- **Infracost PR comment** — job `cost-estimate` chưa chạy; dự toán local vẫn có
-  ($157.19/tháng, SPEC Mục 8).
+- **Apply hạ tầng AWS qua CI** — lượt 2 apply từ local (Q.1). Job `apply` đã viết
+  và đã được xác minh là **skip đúng** trên `pull_request`, nhưng chưa có lượt
+  nào chạy `apply` thật qua `workflow_dispatch`. Muốn chứng minh thì phải dựng
+  lại hạ tầng một lượt nữa.
 - **Mở rộng bộ Conftest Rego** (Should-have) — giữ nguyên 19 rule.
+
+### Q.6 Đường đến pipeline xanh — 4 lỗi thật, mỗi lỗi chỉ CI mới lộ
+
+Ghi lại vì đây là phần học được nhiều nhất: mọi cổng đều xanh ở local trước khi
+push, mà CI vẫn đỏ 4 lần liên tiếp, mỗi lần một nguyên nhân khác hẳn.
+
+| # | Run | Triệu chứng | Nguyên nhân thật | Vì sao local không thấy |
+|---|---|---|---|---|
+| 1 | `36532890593` | 8/8 job fail sau 6s, chưa job nào được cấp runner | **GitHub Actions bị chặn cấp tài khoản** (thanh toán). Không phải lỗi code — `starter.yml` của giảng viên cũng fail y hệt | Local không có khái niệm billing |
+| 2 | `36536653766` | `security-scan` đỏ | Bản render `values-dev` có **CKV_K8S_15 ×3** (`pullPolicy: IfNotPresent`) và **CKV_K8S_21 trên `Ingress`** | `checkov -d infra/` chỉ render bằng **values mặc định** — `Ingress` không tồn tại ở đó, `pullPolicy` mặc định là `Always`. Chính job này sinh ra để vá lỗ hổng đó và nó đã làm đúng việc |
+| 3 | `36542501865` | `plan` đỏ: `Not authorized to perform sts:AssumeRoleWithWebIdentity` ×12 | `sub` GitHub phát ra là `repo:lamduy2002@95230728/insighthub@1362359532:...` (**immutable subject claim**, kèm ID số), trust policy chờ `repo:lamduy2002/insighthub:...` | Không có OIDC ở local. Ba thứ kiểm được (`aud` của provider, hình thức trust policy, environment) đều **đúng** — phải in claim thật mới thấy |
+| 4 | `36542950727` | `lint` đỏ | `variable "github_repo"` thành **biến chết** sau khi chuyển sang `github_sub_claim_prefix` → `terraform_unused_declarations` | Lỗi của tôi: commit đó chạy `fmt`/`validate` mà **quên chạy lại `tflint`** |
+| ✅ | `36543176882` | — | 7/7 success, `apply` skipped đúng | — |
+
+Bài học rút ra, đã đưa thành quy tắc:
+1. **Sửa Terraform thì chạy lại ĐỦ bộ cổng**, không chọn lệnh nào có vẻ liên quan (lỗi #4).
+2. **Đừng đoán khi công cụ không nói rõ.** Lỗi #3 mất 1 run chỉ để in ra `sub` thật, nhưng đó là run duy nhất cho câu trả lời; giả thuyết trước đó (fork / `pull_request`) **sai hoàn toàn**. Bước in claim giữ lại vĩnh viễn trong job `plan`.
+3. **Lỗ hổng phạm vi của công cụ phải được vá bằng bước kiểm riêng.** Lỗi #2 chứng minh giá trị của bước quét bản render dev (SPEC Mục 12) — không có nó thì `Ingress` và `SecretProviderClass` không bao giờ bị quét.
+4. **Tài nguyên dùng chung thì chỉ tham chiếu, không quản lý** — áp cho cả ACM cert lẫn OIDC provider (J.6).
+
+### Q.7 Source binding — kết quả cuối
+
+`evidence/day3.json` **`mode: real`**. Hai hash khớp tuyệt đối giữa CI và local:
+
+```
+source_sha256   = ce95e122c914fed89b3b5af83a03abcf7034df7da1df4832c1e98f045c2a016d
+artifact_sha256 = 234057a8cea2f6647f5d3781961992c552c5b17d3cb4a2b9d11734e3f4542c05
+```
+
+`deployment` là chart archive **deterministic** do CI đóng gói (`scripts/package-chart.sh`), tải về từ artifact `verification-source`. Verifier:
+
+```
+PASS day3 (scope=partial-runtime-contract, runtime_verified=true)
+  PASS day3: CI/policy verified; deployment health is not attested.
+```
+
+⚠️ Mỗi lần sửa bất cứ file nào trong `SOURCE_ROOTS` (kể cả chính file checklist
+này) đều làm `source_sha256` đổi → phải chạy lại CI và dựng lại `day3.json` từ
+artifact của run mới. Đó là lý do MH9 dẫn run `36543176882` (bằng chứng pipeline
+xanh) còn `day3.json` có thể dẫn một run xanh khác, mới hơn — hai việc khác nhau.
