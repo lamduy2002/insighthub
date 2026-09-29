@@ -96,12 +96,22 @@ internet nên route table private không cần NAT — chi phí thêm $0.
 
 | Resource | Ghi chú |
 |---|---|
-| `aws_eks_cluster.lab` | Dùng 2 public subnet ở trên; `public_access_cidrs = var.admin_cidrs`; `access_config { authentication_mode = "API_AND_CONFIG_MAP", bootstrap_cluster_creator_admin_permissions = false }` |
+| `aws_eks_cluster.lab` | Dùng 2 public subnet ở trên; `version = var.eks_version` (pin tường minh, xem bên dưới); `public_access_cidrs = var.admin_cidrs`; `access_config { authentication_mode = "API_AND_CONFIG_MAP", bootstrap_cluster_creator_admin_permissions = false }` |
 | `aws_eks_access_entry.admin[*]` + `aws_eks_access_policy_association.admin[*]` | Cho `var.ci_apply_role_arn` (role `gh_apply`) và từng ARN trong `var.operator_principal_arns` (không hardcode, truyền qua `.tfvars`) — `AmazonEKSClusterAdminPolicy`, scope `cluster` |
 | `aws_eks_node_group.lab` | 1 node, `t3.medium`, subnet gán public IP |
 | `aws_iam_role.eks_cluster` | Role riêng cho EKS control plane |
 | `aws_iam_role.eks_node` | Role riêng cho node group |
 | `aws_iam_openid_connect_provider.eks` | OIDC provider của cluster — bắt buộc cho IRSA (MH6) |
+
+**Pin `eks_version` (2026-09-29)**: `var.eks_version` (root core, default
+`"1.36"`) truyền xuống module và gán vào `aws_eks_cluster.version`. Bỏ trống
+thì AWS chọn default của thời điểm apply — default đó đổi theo thời gian nên
+2 lần apply cách nhau vài tháng ra 2 version khác nhau, vi phạm yêu cầu plan
+deterministic (§7.5) và làm apply lại sau teardown không tái lập được cluster
+cũ. Giá trị xác nhận bằng `aws eks describe-cluster-versions --region
+ap-southeast-1` (2026-09-29): 1.36 là `defaultVersion`, `STANDARD_SUPPORT`,
+EOL 2027-08-02. Nâng version là thay đổi có chủ đích: đổi default của biến,
+review plan (EKS nâng control plane tại chỗ, node group cần nâng theo).
 
 `bootstrap_cluster_creator_admin_permissions = false`: người/role tạo cluster
 không tự có quyền admin ngầm — nếu để `true`, khi `gh_apply` là creator thì
@@ -141,6 +151,21 @@ IRSA của chính controller:
 Việc cài Helm chart và tạo Kubernetes `Ingress` (dẫn tới ALB tự sinh) thuộc
 phần Helm/kubectl, không nằm trong `.tf`.
 
+**Chứng chỉ TLS và DNS — không do Terraform sở hữu (2026-09-29)**
+
+| Thứ | Ai tạo | Terraform làm gì |
+|---|---|---|
+| ACM cert wildcard `*.do2603.click` | **Tài nguyên dùng chung có sẵn** của lớp DO2603, tạo ngoài repo này | Chỉ **tham chiếu** qua `data "aws_acm_certificate" "app"` (`domain = "*.do2603.click"`, `statuses = ["ISSUED"]`, `most_recent = true`) và xuất ra output `certificate_arn`. **Không tạo, không sửa, không xóa** — cert nằm ngoài state nên `terraform destroy` không đụng tới |
+| Record Route53 `insighthub-lamduy.do2603.click` | Job deploy, bằng **AWS CLI** (`aws route53 change-resource-record-sets`, ALIAS/CNAME trỏ DNS name của ALB) | Không có resource nào. ALB do ALB Controller sinh ra sau Terraform nên DNS name chỉ biết được ở thời điểm deploy; đưa vào Terraform sẽ tạo phụ thuộc ngược core → Helm |
+
+Hệ quả vận hành: record Route53 phải **xóa tường minh ở bước 4 của teardown**
+(Mục 8) — không có gì tự dọn hộ. Cert thì ngược lại: **tuyệt đối không xóa**,
+vì học viên khác trong lớp cũng dùng chung.
+
+Hệ quả với `plan`: vì là `data` source, `terraform plan` ở core từ nay **đọc
+ACM thật mỗi lần chạy** — cert bị xóa hoặc hết `ISSUED` thì plan lỗi ngay
+(fail-fast, đúng mong muốn: không apply ra một Ingress không có cert).
+
 ### Secrets
 
 | Resource | Ghi chú |
@@ -166,7 +191,7 @@ Output core cho platform/Helm: `aws_region`, `vpc_id`, `eks_cluster_name`,
 `eks_cluster_endpoint`, `eks_cluster_certificate_authority_data`,
 `app_namespace`, `app_service_account_name`, `app_irsa_role_arn`,
 `alb_controller_role_arn`, `alb_controller_namespace`,
-`alb_controller_service_account_name`, `db_secret_arn`, `redis_secret_arn`,
+`alb_controller_service_account_name`, `certificate_arn`, `db_secret_arn`, `redis_secret_arn`,
 `ecr_repository_urls`, `rds_endpoint` (sensitive), `redis_endpoint`.
 
 Provider `kubernetes` (chỉ ở platform) dùng `exec` auth (`aws eks get-token`
@@ -383,7 +408,12 @@ Cấu trúc file bắt buộc theo MH1: `infra/main.tf`, `infra/variables.tf`,
      xóa khi không còn pod mount — kiểm `kubectl get secret -n insighthub-<env>`.
   3. Chờ ALB bị xóa hẳn — poll `aws elbv2 describe-load-balancers` tới khi
      không còn ALB nào gắn tag cluster này (controller cần vài phút).
-  4. Xóa record Route53 (nếu đã trỏ domain cho HTTPS).
+  4. Xóa record Route53 `insighthub-lamduy.do2603.click` bằng AWS CLI
+     (`aws route53 change-resource-record-sets --change-batch` action `DELETE`,
+     giá trị record phải khớp y hệt lúc tạo). Record do job deploy tạo bằng
+     CLI, **không** nằm trong Terraform state nên không có gì tự xóa.
+     **Không đụng tới ACM cert `*.do2603.click`** — tài nguyên dùng chung của
+     lớp, Terraform chỉ `data` tham chiếu (Mục 2, Load Balancing).
   5. Gỡ add-on cluster: `helm uninstall` AWS Load Balancer Controller,
      AWS provider ASCP, Secrets Store CSI Driver, `metrics-server`.
   6. Platform destroy (cluster còn sống, IP trong `public_access_cidrs`):
@@ -462,6 +492,12 @@ cũng là nội dung trong từng comment `#checkov:skip`):
 | CKV_AWS_290 ×2 | như trên | Cùng nguyên nhân CKV_AWS_355 — action ghi (Create/Delete/Modify) đi kèm `Resource = "*"` do giới hạn API, không phải thiếu ràng buộc chủ ý. |
 | CKV_AWS_289 | `aws_iam_role_policy.gh_apply_data` (bootstrap) | `kms:PutKeyPolicy`/`kms:CreateGrant` bị coi là "permissions management" — bắt buộc do KMS API yêu cầu `Resource = "*"` cho các action này trước khi key tồn tại, đã giới hạn còn lại ở mức statement riêng theo service. |
 
+**Finding mới 2026-09-29 — phát sinh từ việc pin `eks_version`:**
+
+| Check ID | Resource | Lý do chấp nhận |
+|---|---|---|
+| CKV_AWS_339 | `module.eks.aws_eks_cluster.lab` | **Dương tính giả do tool lỗi thời.** Check so `version` với một danh sách **hardcode** trong checkov 3.3.19 (`checkov/terraform/checks/resource/aws/EKSPlatformVersion.py`, `get_expected_values()` chỉ tới `"1.35"`). `1.36` là `defaultVersion` của AWS và còn `STANDARD_SUPPORT` tới 2027-08-02 (`aws eks describe-cluster-versions`), tức **đúng tinh thần của check** (chạy version còn được hỗ trợ) nhưng vẫn FAIL. Lưu ý: trước đây check này PASS chỉ vì không khai `version` (`missing_block_result = PASSED`) — pin version tường minh an toàn hơn, không phải hạ chuẩn. Gỡ skip khi nâng checkov lên bản đã biết 1.36. |
+
 **Lưu ý về CKV_AWS_39**: đây là finding duy nhất trong 6 finding được giao ban
 đầu **không đóng hoàn toàn** được — lý do đã ghi ở bảng trên. Nếu cần đóng
 dứt điểm, hướng khả thi là thêm VPN (Client VPN endpoint hoặc Site-to-Site)
@@ -497,8 +533,14 @@ trong template** (cùng nguyên tắc với `#checkov:skip` bên Terraform: khô
 | CKV2_K8S_6 | 4 | 4 pod của chart app | **Giới hạn đã biết**: trên EKS, VPC CNI **chưa bật network policy agent** nên `NetworkPolicy` không được thực thi. Thêm policy không enforce là cảm giác an toàn giả, lại dễ chặn nhầm traffic ALB `target-type: ip` (ALB gọi thẳng pod IP, không qua Service). Nếu bật `enableNetworkPolicy` cho VPC CNI thì mở lại mục này. |
 
 Kết quả sau khi xử lý — `checkov -d infra/`:
-**687 passed, 0 failed, 54 skipped, exit code 0**
-(`terraform` 164/0/24 · `helm` 510/0/30 · `kubernetes` 13/0/0).
+**687 passed, 0 failed, 56 skipped, exit code 0**
+(`terraform` 163/0/25 · `helm` 511/0/31 · `kubernetes` 13/0/0).
+
+Cập nhật 2026-09-29: `terraform` +1 skip (CKV_AWS_339, Mục 10); `helm` +1 skip
+và +1 passed do ServiceAccount `insighthub` chuyển từ chart app sang chart
+`insighthub-local-deps` (Mục 13) — SA giờ nằm trong bản render mặc định của
+local-deps nên bị CKV_K8S_21 soi, cùng dương tính giả namespace `default` như
+các resource khác của 2 chart.
 
 ## 11. Policy-as-code — Conftest (`infra/policy/terraform/`)
 
@@ -719,7 +761,37 @@ helm upgrade --install insighthub infra/helm/insighthub ... \
 | Chart | Nội dung | Dùng ở đâu |
 |---|---|---|
 | `insighthub` | web/api/worker Deployment + Service + HPA + Ingress (ALB) + SecretProviderClass + migration Job | **Cả hai** — kind (`values-local.yaml`) và EKS (`values-dev.yaml`) |
-| `insighthub-local-deps` | Postgres (pgvector) + Redis + Secret kết nối + NetworkPolicy | **Chỉ kind** |
+| `insighthub-local-deps` | Postgres (pgvector) + Redis + Secret kết nối + **ServiceAccount `insighthub`** + NetworkPolicy | **Chỉ kind** |
+
+### ServiceAccount không thuộc chart app (2026-09-29)
+
+Chart `insighthub` **không có template ServiceAccount nào**. SA `insighthub`
+phải tồn tại **trước** release, ở cả hai môi trường:
+
+| Môi trường | Ai tạo SA | Ghi chú |
+|---|---|---|
+| dev (EKS) | Terraform root platform (`kubernetes_service_account.insighthub`) | Kèm annotation `eks.amazonaws.com/role-arn` (IRSA, MH6) |
+| local (kind) | Chart `insighthub-local-deps` (cài trước chart app) | SA trần, không annotation — local không có IRSA |
+
+Vì sao không để chart app tự tạo: migration Job là hook `pre-install,pre-upgrade`
+và chạy **bằng SA này**, mà hook luôn chạy trước resource thường → SA tạo
+trong cùng release đến quá muộn. Bản trước lách bằng cách biến chính SA thành
+hook `hook-weight: "-20"`, kéo theo 2 hệ quả xấu: (1) SA thành resource
+**không được release sở hữu** (không có annotation `meta.helm.sh/release-name`),
+`helm uninstall` không xoá, teardown phải xoá tay; (2) hai môi trường tạo SA
+theo 2 cơ chế khác nhau. Chuyển sang local-deps làm cả hai môi trường cùng
+một hình dạng: SA có sẵn, chart app chỉ tham chiếu theo tên.
+
+`serviceAccount.create` giữ lại trong values (`false` ở cả `values.yaml`,
+`values-local.yaml`, `values-dev.yaml`) **làm guard, không phải công tắc**:
+đặt `true` thì `insighthub.serviceAccountName` gọi `fail` ngay lúc render với
+thông báo chỉ ra đúng nơi tạo SA — thay vì im lặng chạy bằng SA không có IRSA.
+
+⚠️ Khi nâng cấp từ bản cũ trên một cluster đã cài: SA cũ (do hook tạo) không
+có ownership metadata của Helm nên `helm upgrade insighthub-deps` sẽ từ chối
+nhận quyền sở hữu (`invalid ownership metadata`). Phải
+`kubectl -n <ns> delete sa insighthub` trước rồi mới upgrade — an toàn vì mọi
+pod đều `automountServiceAccountToken: false`.
 
 Tách làm 2 chart để ràng buộc "values AWS KHÔNG được có StatefulSet"
 (DAY3-CHECKLIST N.10/O.12) là **bất biến theo cấu trúc**, không phụ thuộc
@@ -783,6 +855,8 @@ Chấp nhận — tên đó không dùng ở local lẫn CI.
 | 3 | `helm install insighthub … --dry-run` có tag, thiếu `initSql` | FAIL — `migration.initSql vẫn là placeholder` |
 | 4 | `helm install insighthub … --dry-run` đủ tag + `--set-file` | OK |
 | 5 | Dùng `image.<svc>.digest` thay tag | OK (digest thắng tag) |
+| 6 | `helm template insighthub … --set serviceAccount.create=true` | FAIL — `serviceAccount.create phải là false: chart insighthub không tạo ServiceAccount` |
+| 7 | `helm template … -f values-local.yaml` và `-f values-dev.yaml` | Không có object `kind: ServiceAccount` nào; pod spec vẫn `serviceAccountName: insighthub` |
 
 ### Phạm vi checkov KHÔNG phủ được
 

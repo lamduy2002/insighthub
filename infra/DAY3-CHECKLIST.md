@@ -22,10 +22,10 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | MH7 | `.github/workflows/iac.yml` | dòng 831 | ❌ chưa làm — chỉ có `starter.yml`; bootstrap IAM/OIDC đã xong (`infra/bootstrap/github-oidc/`) nhưng workflow YAML chưa viết |
 | MH8 | Pipeline jobs fmt→lint→scan→policy→plan→cost→apply | dòng 832 | ❌ chưa làm |
 | MH9 | Pipeline green trên PR | dòng 833 | ❌ chưa làm |
-| MH10 | InsightHub Helm deploy | dòng 834 | ❌ chưa làm — không có chart nào trong repo; ECR repo đã có code (chưa apply) để sau này push image |
+| MH10 | InsightHub Helm deploy | dòng 834 | ⚠️ **local PASS, AWS chưa** — 2 chart ở `infra/helm/` (`insighthub`, `insighthub-local-deps`), đã `helm upgrade` thật trên kind `insighthub-lab` ns `insighthub-local` (2026-09-29): 5/5 pod Running, smoke curl `/healthz` 200 · `/readyz` 200 · `POST /documents` 202 · status `ready` <2s · `POST /chat` 200 kèm `sources`; UI kiểm trên trình duyệt OK. Trên EKS chưa deploy (cần apply core+platform trước). Theo Guide local-first: **local PASS không tính là hoàn thành AWS** |
 | MH11 | Smoke test upload+chat | dòng 835 | ❌ chưa làm |
 | MH12 | `tflint --recursive` no warnings | dòng 836 | ✅ xong — đã chạy lại trên cả module chính + `infra/bootstrap/github-oidc/`: 0 errors, 0 warnings |
-| MH13 | `checkov` no HIGH | dòng 837 | ✅ `checkov -d infra/` → **157 passed, 0 failed, 24 skipped, exit 0** — 2 finding sửa hẳn bằng code (CKV2_AWS_60, CKV_AWS_136×3), 24 còn lại chuyển thành `#checkov:skip` tại resource kèm lý do (`infra/SPEC.md` mục 10). Vẫn thiếu xác nhận độc lập severity "không HIGH" cho 24 finding skip (checkov OSS không trả field `severity`), nhưng exit code 0 nên job security-scan trong pipeline sẽ xanh. |
+| MH13 | `checkov` no HIGH | dòng 837 | ✅ `checkov -d infra/` → **687 passed, 0 failed, 56 skipped, exit 0** (2026-09-29; số cũ 157/0/24 là khi chưa có Helm chart trong `infra/`) — phần `terraform` 163/0/**25** (thêm CKV_AWS_339 khi pin `eks_version`, SPEC Mục 10), `helm` 511/0/**31**, `kubernetes` 13/0/0. Mọi finding bỏ qua đều là `#checkov:skip` / `checkov.io/skip<n>` gắn tại resource kèm lý do (SPEC Mục 10 + 10b), không `--skip-check` toàn cục, không `--soft-fail`. Vẫn thiếu xác nhận độc lập severity "không HIGH" cho các finding skip (checkov OSS không trả field `severity`), nhưng exit code 0 nên job security-scan trong pipeline sẽ xanh. |
 | MH14 | All resources tagged | dòng 838 | ✅ áp dụng quyết định J.1 — `owner` (chữ thường) duy nhất trong `common_tags`, không còn `Owner`. Module bootstrap dùng tag scheme riêng có chủ đích (xem SPEC.md mục 2, phần Tagging) |
 
 ## B. Non-functional (§7.3, dòng 802-809)
@@ -33,8 +33,8 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | # | Yêu cầu | Trạng thái |
 |---|---|---|
 | 1 | `tflint --recursive` no warnings | ✅ xong |
-| 2 | `checkov -d infra/` no HIGH | ✅ 0 failed, 24 skipped kèm lý do inline (xem mục A/MH13) |
-| 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ✅ local (2026-09-25) — `infra/policy/terraform/main.rego` (18 rule `deny`, Rego v1) + `main_test.rego` (`conftest verify`: 23/23 pass). Chạy trên plan thật (`terraform show -json tfplan`): 18 passed, 0 failures. Danh sách rule + lý do helper `is_true`: `infra/SPEC.md` Mục 11. ⚠️ Pipeline CI (`iac.yml`) chưa có — CI phải cài Conftest 0.70.x. |
+| 2 | `checkov -d infra/` no HIGH | ✅ 687 passed, 0 failed, 56 skipped kèm lý do inline (xem mục A/MH13) |
+| 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ✅ local (2026-09-25) — `infra/policy/terraform/main.rego` (18 rule `deny`, Rego v1) + `main_test.rego` (`conftest verify`: 23/23 pass). Chạy trên plan thật (`terraform show -json tfplan`): **19 passed, 0 failures** (2026-09-29, plan core 50 to add). Danh sách rule + lý do helper `is_true`: `infra/SPEC.md` Mục 11. ⚠️ Pipeline CI (`iac.yml`) chưa có — CI phải cài Conftest 0.70.x. |
 | 4 | Tags: project, environment, owner, cost_center, managed_by | ✅ áp dụng quyết định J.1 |
 | 5 | Pipeline OIDC AWS (no long-lived keys) | ⚠️ code xong, chưa apply — `infra/bootstrap/github-oidc/` có OIDC provider + 2 role (`gh_plan`/`gh_apply`), `terraform plan` sạch (10 to add); chưa apply nên GitHub Actions thật vẫn chưa dùng được. Mọi apply thủ công hôm nay vẫn qua IAM user `DE000215` (long-lived key), hợp lệ cho thao tác thủ công. |
 | 6 | Secret qua AWS Secrets Manager | ✅ xong |
@@ -50,7 +50,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | `tflint --recursive` → 0/0 | ✅ |
 | `checkov -d infra/` → no HIGH | ✅ 0 failed (xem mục A/MH13) |
 | `terraform plan -out=tfplan` → deterministic | ✅ **sửa thật** — trước đây dòng này bị đánh dấu ✅ nhầm: `public_access_cidrs` lấy từ `data.http.my_ip` khiến plan **không** deterministic (đổi theo IP mạng). Đã bỏ `data.http`, dùng `var.operator_cidrs` bắt buộc truyền — giờ plan mới thật sự deterministic. |
-| `conftest test --policy policy/terraform tfplan.json` → pass — **bắt buộc** | ✅ local — chạy từ `infra/`, plan thật: 18 passed, 0 failures (2026-09-25). ⚠️ `tfplan.json` **không được nằm trong `infra/` khi chạy checkov** (verify.py copy cả `infra/` rồi `checkov -d .` → checkov quét plan JSON, không thấy inline `#checkov:skip` → fail CKV2_AWS_57/50...). Sinh plan JSON ra ngoài `infra/` hoặc xoá trước bước checkov — xem SPEC Mục 11. |
+| `conftest test --policy policy/terraform tfplan.json` → pass — **bắt buộc** | ✅ local — chạy từ `infra/`, plan thật: **19 passed, 0 failures** (2026-09-29). ⚠️ `tfplan.json` **không được nằm trong `infra/` khi chạy checkov** (verify.py copy cả `infra/` rồi `checkov -d .` → checkov quét plan JSON, không thấy inline `#checkov:skip` → fail CKV2_AWS_57/50...). Sinh plan JSON ra ngoài `infra/` hoặc xoá trước bước checkov — xem SPEC Mục 11. |
 | `infracost breakdown --path infra/` | ✅ |
 | `gh run list --workflow=iac.yml` → ✓ | ❌ |
 | `kubectl get ns insighthub-dev` → exists | ❌ — namespace tên thật là `insighthub-dev` khi `var.environment=dev` (mã hoá `insighthub-${var.environment}`), code đã sẵn sàng, chưa apply |
@@ -65,10 +65,10 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | Thành phần | Trạng thái |
 |---|---|
 | EKS namespace `insighthub-<env>` | ✅ code xong (`infra/platform/` — `kubernetes_namespace.app`), chưa apply |
-| Deployment `web` + Service | ❌ chưa làm (Helm chart) |
-| Deployment `api` + Service + **HPA** + **Ingress (TLS)** | ❌ chưa làm — HPA cần `metrics-server` cài trước (xem mục L) |
-| Deployment `ingestion-worker` | ❌ chưa làm (Helm chart) |
-| Helm values + ConfigMap + Secret | ❌ chưa làm |
+| Deployment `web` + Service | ✅ chart `insighthub`, chạy thật trên kind |
+| Deployment `api` + Service + **HPA** + **Ingress (TLS)** | ⚠️ Deployment/Service/HPA chạy thật trên kind (`metrics-server` đã cài, HPA đọc được CPU). **Ingress chưa chạy thật** — `ingress.enabled=false` ở local, bản dev mới chỉ `helm template` + checkov (cần ALB Controller trên EKS) |
+| Deployment `ingestion-worker` | ✅ chart `insighthub`, chạy thật trên kind |
+| Helm values + ConfigMap + Secret | ✅ `values-local.yaml`/`values-dev.yaml`, ConfigMap app+web, Secret từ chart local-deps (local) / CSI `secretObjects` (dev, chưa chạy thật) |
 | RDS PostgreSQL 16 + pgvector | ✅ đã có trong Terraform, nay subnet **private** (MH5), chưa apply |
 | ElastiCache Redis 7 | ✅ đã có trong Terraform, nay subnet **private** (MH5), chưa apply |
 | IAM roles for service accounts (IRSA) | ✅ code xong — ALB controller + app (`insighthub`), chưa apply |
@@ -256,7 +256,7 @@ Non-root trên K8s: `USER` trong image là **tên** → với `runAsNonRoot: tru
 
 | # | Hạng mục | Trạng thái |
 |---|---|---|
-| O.1 | Tách **core** (`infra/`, key `insighthub/core/terraform.tfstate`) / **platform** (`infra/platform/`, key `insighthub/platform/terraform.tfstate`, đọc core qua `terraform_remote_state`) / bootstrap (giữ vị trí). Core không còn provider kubernetes. Thứ tự apply bootstrap → core → platform → Helm; teardown Helm → chờ ALB xóa → Route53 → platform destroy → core destroy (SPEC Mục 8) | ✅ code xong; core plan thật 49 to add; platform chỉ validate (plan cần cluster sống) |
+| O.1 | Tách **core** (`infra/`, key `insighthub/core/terraform.tfstate`) / **platform** (`infra/platform/`, key `insighthub/platform/terraform.tfstate`, đọc core qua `terraform_remote_state`) / bootstrap (giữ vị trí). Core không còn provider kubernetes. Thứ tự apply bootstrap → core → platform → Helm; teardown Helm → chờ ALB xóa → Route53 → platform destroy → core destroy (SPEC Mục 8) | ✅ code xong; core plan thật **50 to add** (2026-09-29); platform chỉ validate (plan cần cluster sống) |
 | O.2 | Modules `infra/modules/{network,eks,data,ecr}` | ✅ code xong |
 | O.3 | `terraform.tfvars.example` cho core và platform (giá trị giả) | ✅ |
 | O.4 | EKS `API_AND_CONFIG_MAP` + access entry cho `gh_apply` và `operator_principal_arns`, `bootstrap_cluster_creator_admin_permissions = false`; `admin_cidrs` thay `operator_cidrs` | ✅ code xong |
@@ -267,7 +267,59 @@ Non-root trên K8s: `USER` trong image là **tên** → với `runAsNonRoot: tru
 | O.9 | Pipeline có: app tests, image build (push ECR bằng `gh_apply`), **source binding** (`source-manifest.json` + chart archive **deterministic** làm `deployment` artifact), Infracost PR comment, AI giải thích plan **đã sanitize** (bỏ giá trị sensitive/ARN account trước khi gửi) | ❌ |
 | O.10 | PR từ fork **không có cloud identity** (không environment, không `id-token: write`, không secret) — chỉ chạy fmt/validate/lint/checkov/conftest trên fixture | ❌ chưa viết workflow (trust `gh_plan` đã chặn bằng `sub` environment) |
 | O.11 | Tạm thêm IP runner vào `public_access_cidrs` trong job apply rồi khôi phục (`if: always()`), không `ignore_changes`; platform plan -out → in log → apply đúng file (trade-off: không human review riêng cho platform) | ⚠️ thiết kế (SPEC Mục 12) |
-| O.12 | Helm chart: probes, resources, securityContext, HPA, Ingress (ACM + domain có sẵn), Secrets Store CSI (`SecretProviderClass`), migration Job; values `local`/`dev` — local chạy Postgres/Redis **trong cluster**, AWS dùng RDS/ElastiCache (**không StatefulSet** trên AWS) | ❌ |
-| O.13 | Test local bằng **kind riêng** (không dùng cluster lab chung) + kiểm UI trên trình duyệt | ❌ |
+| O.12 | Helm chart: probes, resources, securityContext, HPA, Ingress (ACM + domain có sẵn), Secrets Store CSI (`SecretProviderClass`), migration Job; values `local`/`dev` — local chạy Postgres/Redis **trong cluster**, AWS dùng RDS/ElastiCache (**không StatefulSet** trên AWS) | ✅ code xong — 2 chart (SPEC Mục 13). Ràng buộc "không StatefulSet trên AWS" là **bất biến theo cấu trúc**: chart app không có template StatefulSet nào. Ingress + SecretProviderClass mới chỉ `helm template` + checkov (bật ở `values-dev`), **chưa chạy thật** vì cần EKS + ALB Controller + CSI driver |
+| O.13 | Test local bằng **kind riêng** (không dùng cluster lab chung) + kiểm UI trên trình duyệt | ✅ xong (2026-09-29) — kind `insighthub-lab` (context `kind-insighthub-lab`, tách hẳn khỏi cluster EKS), ns `insighthub-local`; `helm upgrade` 2 chart, 5/5 pod Running; smoke curl PASS toàn bộ; UI kiểm trên Edge qua `kubectl port-forward` (web 3000, api 8000) — upload + chat chạy được |
 | O.14 | Evidence: image digest, test **allow/deny quyền** (IRSA đọc được 2 secret, bị từ chối secret khác; gh_plan không ghi được state), tag inventory, **fresh plan sau apply không thay đổi**, runbook, requirement matrix, PR description | ❌ |
+| O.15 | **ACM cert + DNS**: cert `*.do2603.click` là tài nguyên dùng chung có sẵn → Terraform chỉ `data` tham chiếu + output `certificate_arn`, không tạo/không xóa; record Route53 `insighthub-lamduy.do2603.click` tạo bằng CLI ở job deploy, xóa ở bước 4 teardown | ✅ code + tài liệu xong (SPEC Mục 2 "Load Balancing", Mục 8 bước 4). Plan core resolve ra ARN cert thật. Record Route53 chưa tạo (chưa deploy EKS) |
+| O.16 | **Pin `eks_version`** (`var.eks_version`, default `1.36`) thay vì để AWS chọn default — default đổi theo thời gian nên plan không deterministic | ✅ xong. Kéo theo finding mới CKV_AWS_339 (dương tính giả, danh sách version hardcode của checkov 3.3.19 chỉ tới 1.35) → `#checkov:skip` kèm lý do, SPEC Mục 10 |
 
+
+## P. Lượt 2026-09-29 — ACM/DNS, ServiceAccount, `eks_version`, deploy local
+
+### P.1 Thay đổi code
+
+| # | Thay đổi | File |
+|---|---|---|
+| 1 | `data "aws_acm_certificate" "app"` (`*.do2603.click`, `ISSUED`, `most_recent`) + output `certificate_arn` | `infra/main.tf`, `infra/outputs.tf` |
+| 2 | ServiceAccount `insighthub` chuyển từ chart app → chart `insighthub-local-deps`; bỏ hook `pre-install/hook-weight -20`; `serviceAccount.create=false` ở cả 3 values; guard `fail` trong `insighthub.serviceAccountName` | `infra/helm/insighthub/templates/{serviceaccount.yaml (xoá),_helpers.tpl,NOTES.txt}`, `infra/helm/insighthub/values*.yaml`, `infra/helm/insighthub-local-deps/{values.yaml,templates/serviceaccount.yaml,templates/NOTES.txt}` |
+| 3 | `var.eks_version` (default `1.36`) → `aws_eks_cluster.version` | `infra/variables.tf`, `infra/main.tf`, `infra/modules/eks/{variables,main}.tf` |
+| 4 | `#checkov:skip=CKV_AWS_339` kèm lý do (hệ quả của #3) | `infra/modules/eks/main.tf` |
+
+### P.2 Kết quả chạy (tất cả PASS, không hạ assertion nào)
+
+| Lệnh | Kết quả |
+|---|---|
+| `terraform fmt -check -recursive infra/` | no diff |
+| `terraform validate` × 3 root (core, platform, bootstrap) | 3/3 Success |
+| `tflint --recursive` (từ `infra/`) | exit 0, 0 error, 0 warning |
+| `checkov -d infra/` | 687 passed, 0 failed, 56 skipped, **exit 0** |
+| `terraform -chdir=infra plan -out="$PLAN_DIR/core.tfplan"` | 50 to add; output `certificate_arn` resolve ra ARN cert thật |
+| `conftest test --policy policy/terraform "$PLAN_DIR/core.tfplan.json"` | 19 tests, 0 failures |
+| `pytest tests/milestones/day3` | 2 passed |
+| `helm lint` × 4 (app default/local/dev + local-deps) | 0 chart failed |
+| `helm template` × 3 + assert | app render **0** object `ServiceAccount`; local-deps render SA `insighthub`; pod spec vẫn `serviceAccountName: insighthub`; `--set serviceAccount.create=true` → FAIL đúng thông báo |
+| `bash scripts/package-chart.sh --verify` | DETERMINISTIC OK |
+| `find infra … *tfplan*/*.tfstate*` | rỗng (ràng buộc mục K) |
+| `helm upgrade` 2 chart trên kind + smoke curl | 5/5 pod Running; `/healthz` 200, `/readyz` 200, `POST /documents` 202, `ready` <2s, `POST /chat` 200 kèm `sources`; UI trên Edge OK |
+
+`$PLAN_DIR = /tmp/insighthub-plans` (ngoài repo, đúng mục K).
+
+### P.3 Ghi chú vận hành phát hiện trong lượt này
+
+- **Nâng cấp chart trên cluster đã cài bản cũ**: SA `insighthub` bản cũ do hook
+  của release app tạo nên **không có** annotation `meta.helm.sh/release-name`
+  → `helm upgrade insighthub-deps` báo `invalid ownership metadata` và dừng.
+  Phải `kubectl -n insighthub-local delete sa insighthub` trước rồi mới
+  upgrade. An toàn vì mọi pod đều `automountServiceAccountToken: false`.
+  Cài mới hoàn toàn thì không gặp.
+- **`kubectl port-forward` trên WSL2**: `KUBECTL_PORT_FORWARD_WEBSOCKETS=false`
+  vẫn có tác dụng, port-forward **không** sập trong suốt phiên kiểm UI.
+  Lỗi `bind: address already in use` gặp lúc đầu là do truyền
+  `--address 127.0.0.1,0.0.0.0` (0.0.0.0 đã bao 127.0.0.1 nên tự đụng nhau),
+  **không** phải bug websocket — bỏ cờ `--address` là chạy bình thường. Không
+  cần đổi sang NodePort.
+- **`data` source ACM làm `plan` core phụ thuộc AWS thật**: cert bị xóa hoặc
+  hết trạng thái `ISSUED` thì `terraform plan` lỗi ngay. Đây là fail-fast có
+  chủ đích (không apply ra Ingress thiếu cert), nhưng job plan trong CI vì thế
+  **bắt buộc có quyền `acm:ListCertificates` + `acm:DescribeCertificate`** —
+  kiểm lại policy `gh_plan` khi viết `iac.yml` (`ReadOnlyAccess` đã phủ).
