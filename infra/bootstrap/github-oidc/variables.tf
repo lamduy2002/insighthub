@@ -23,9 +23,39 @@ variable "cost_center" {
 }
 
 variable "github_repo" {
-  description = "owner/repo GitHub dùng làm điều kiện trust OIDC (định dạng đúng repo:<owner>/<repo>:...)."
+  description = "owner/repo GitHub, dùng cho tài liệu/tra cứu. KHÔNG dùng dựng điều kiện trust — xem github_sub_claim_prefix."
   type        = string
   default     = "lamduy2002/insighthub"
+}
+
+variable "github_sub_claim_prefix" {
+  description = <<-EOT
+    Tiền tố claim `sub` mà GitHub Actions THỰC SỰ phát ra, dùng dựng điều kiện
+    trust OIDC. KHÔNG tự ghép từ `github_repo`.
+
+    Repo này bật **immutable subject claim**: `sub` chứa ID số bất biến của
+    owner và repo chứ không phải tên, ví dụ
+    `repo:lamduy2002@95230728/insighthub@1362359532:environment:infra-plan`.
+    Dùng `repo:<owner>/<repo>:...` sẽ luôn bị AWS từ chối với
+    "Not authorized to perform sts:AssumeRoleWithWebIdentity" — đã gặp thật
+    (2026-09-29, run 36542501865).
+
+    Lấy giá trị đúng bằng:
+      gh api /repos/<owner>/<repo>/actions/oidc/customization/sub
+    → trả `{"use_immutable_subject": true, "sub_claim_prefix": "..."}`.
+    Dùng đúng `sub_claim_prefix` đó. Nếu `use_immutable_subject` là false thì
+    prefix là `repo:<owner>/<repo>`.
+
+    Ràng theo ID số thực ra CHẶT HƠN ràng theo tên: đổi tên repo hay đổi tên
+    owner không âm thầm chuyển quyền trust sang chủ thể khác.
+  EOT
+  type        = string
+  default     = "repo:lamduy2002@95230728/insighthub@1362359532"
+
+  validation {
+    condition     = can(regex("^repo:[^:]+/[^:]+$", var.github_sub_claim_prefix))
+    error_message = "github_sub_claim_prefix phải có dạng repo:<owner>[@id]/<repo>[@id] và KHÔNG kèm phần :environment:/:ref:."
+  }
 }
 
 variable "state_bucket" {

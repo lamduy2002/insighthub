@@ -219,6 +219,36 @@ key riêng `insighthub/bootstrap/github-oidc.tfstate`.
 | `aws_iam_role.gh_apply` | Trust `sub = repo:lamduy2002/insighthub:environment:production` (GitHub Environment có **required reviewer**), `aud = sts.amazonaws.com`. CRUD scoped theo resource type core; state 2 key Get/Put/Delete; `plans/*` chỉ Get + Delete + `kms:Decrypt`; EKS access entry (cluster + `access-entry/insighthub-lab/*`); `eks:UpdateClusterConfig` + `eks:DescribeUpdate` **chỉ trên ARN `cluster/insighthub-lab`** (tách khỏi statement wildcard); RDS parameter group (`pg:insighthub-*`); ECR push (`GetAuthorizationToken` trên `*` do API, còn lại trên `repository/insighthub/*`); `iam:PassRole` 2 role EKS. KHÔNG AdministratorAccess |
 | `aws_kms_key.tfplan` + `alias/insighthub-tfplan` | CMK mã hóa saved plan; key policy: root account, `gh_plan` encrypt, `gh_apply` decrypt; rotation bật |
 
+**Điều kiện trust phải dùng `sub` GitHub THỰC SỰ phát ra, không tự ghép**
+(đo thật 2026-09-29, run `36542501865`). Repo này bật **immutable subject
+claim**, nên `sub` chứa ID số bất biến chứ không phải tên:
+
+```
+sub = repo:lamduy2002@95230728/insighthub@1362359532:environment:infra-plan
+       ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+       owner login @ owner id  repo name @ repo id
+```
+
+Trust policy ban đầu ghép `repo:${var.github_repo}:environment:...` →
+`repo:lamduy2002/insighthub:environment:infra-plan` → AWS từ chối mọi lần với
+`Not authorized to perform sts:AssumeRoleWithWebIdentity`. Thông báo này
+**không nói claim nào lệch**, nên job `plan` có thêm một bước in đúng
+`sub`/`aud`/`repository`/`event_name` (decode payload JWT, **không in token**)
+— giữ lại làm công cụ chẩn đoán lâu dài.
+
+Lấy giá trị đúng bằng API của GitHub, không đoán:
+
+```bash
+gh api /repos/<owner>/<repo>/actions/oidc/customization/sub
+# {"use_default":true,"use_immutable_subject":true,
+#  "sub_claim_prefix":"repo:lamduy2002@95230728/insighthub@1362359532"}
+```
+
+Giá trị đó là `var.github_sub_claim_prefix` (bootstrap). `var.github_repo` giữ
+lại **chỉ để tra cứu**, không dùng dựng điều kiện trust nữa. Ràng theo ID số
+thực ra **chặt hơn** ràng theo tên: đổi tên repo hay đổi tên owner không âm
+thầm chuyển quyền trust sang chủ thể khác.
+
 **Saved plan**: lưu ở `s3://do2603-lamduy2002-insighthub-tfstate/plans/`
 (prefix riêng, SSE-KMS bằng `tfplan` key). Lý do mã hóa riêng: saved plan
 chứa giá trị nhạy cảm dạng plaintext (`random_password` DB/Redis sau apply,

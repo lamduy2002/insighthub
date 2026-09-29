@@ -53,7 +53,7 @@ resource "aws_iam_role" "gh_plan" {
       Condition = {
         StringEquals = {
           "${local.gh_oidc_host}:aud" = "sts.amazonaws.com"
-          "${local.gh_oidc_host}:sub" = "repo:${var.github_repo}:environment:${var.plan_environment}"
+          "${local.gh_oidc_host}:sub" = "${var.github_sub_claim_prefix}:environment:${var.plan_environment}"
         }
       }
     }]
@@ -143,7 +143,7 @@ resource "aws_iam_role" "gh_apply" {
       Condition = {
         StringEquals = {
           "${local.gh_oidc_host}:aud" = "sts.amazonaws.com"
-          "${local.gh_oidc_host}:sub" = "repo:${var.github_repo}:environment:${var.apply_environment}"
+          "${local.gh_oidc_host}:sub" = "${var.github_sub_claim_prefix}:environment:${var.apply_environment}"
         }
       }
     }]
