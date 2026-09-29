@@ -14,6 +14,7 @@ metadata:
   labels:
     {{- include "insighthub.labels" . | nindent 4 }}
   annotations:
+    checkov.io/skip1: CKV_K8S_21=helm khong ghi metadata.namespace vao manifest nen checkov luon thay default, ke ca khi render co -n; cai dat that luon co -n insighthub-<env> - xem SPEC.md muc 13
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'

@@ -9,6 +9,7 @@ metadata:
     checkov.io/skip2: CKV_K8S_40=UID nuong trong image (app 1001, pgvector 999); doi UID phai build lai image va chown lai filesystem - xem SPEC.md muc 10
     checkov.io/skip3: CKV_K8S_43=local nap image bang kind load nen khong co digest; dev truyen image.<svc>.digest lay tu ECR sau khi push, repo image_tag_mutability IMMUTABLE - xem SPEC.md muc 12
     checkov.io/skip4: CKV2_K8S_6=EKS VPC CNI chua bat network policy agent nen NetworkPolicy khong duoc thuc thi; them policy khong enforce la cam giac an toan gia va de chan nham traffic ALB target-type ip - xem SPEC.md muc 10
+    checkov.io/skip5: CKV_K8S_15=values-dev dat pullPolicy IfNotPresent co chu dich - deploy that luon truyen image.<svc>.digest (SPEC Muc 12) nen tham chieu la bat bien, keo image moi moi lan restart chi ton thoi gian va quota ECR ma khong doi gi. Values mac dinh van la Always cho moi truong chua biet - xem SPEC.md muc 10b
 spec:
   replicas: {{ .Values.web.replicaCount }}
   selector:

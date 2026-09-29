@@ -21,11 +21,11 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | MH6 | IRSA: ServiceAccount + IAM Role binding | dòng 830, verify bằng `kubectl describe sa insighthub` | ✅ **xong thật, chứng minh ở mức runtime** — `kubectl describe sa insighthub -n insighthub-dev` → annotation `eks.amazonaws.com/role-arn: ...insighthub-app-role`; pod thật inject `AWS_ROLE_ARN=...insighthub-app-role` + `AWS_WEB_IDENTITY_TOKEN_FILE` (KHÔNG phải node role); và Secret `insighthub-app-secrets` được CSI sync ra 2 key → pod đã **thực sự dùng IRSA đọc được Secrets Manager**. Bằng chứng `evidence/day3-mh3-mh6.txt` |
 | MH7 | `.github/workflows/iac.yml` | dòng 831 | ✅ đã viết — 7 job + `verification-source`, action pin theo commit SHA, conftest tải kèm verify sha256. Bootstrap OIDC **đã apply thật** (12 resource), 4 repo variable + 2 GitHub Environment (`production` có required reviewer) đã tạo |
 | MH8 | Pipeline jobs fmt→lint→scan→policy→plan→cost→apply | dòng 832 | ✅ đủ 7 job **đúng tên**: `fmt`, `lint`, `security-scan`, `policy-check`, `plan`, `cost-estimate`, `apply`. Saved plan qua S3 SSE-KMS (không phải artifact GitHub), `apply` verify sha256 trước khi apply đúng file đã review |
-| MH9 | Pipeline green trên PR | dòng 833 | ❌ **CHƯA ĐẠT — chặn ngoài tầm code**. PR #2 đã mở, run `36532890593`: **8/8 job fail sau 6s, chưa job nào được cấp runner** (`runner` rỗng). Annotation: *"recent account payments have failed or your spending limit needs to be increased"*. Đã loại trừ nguyên nhân từ code: mọi `runs-on` đều `ubuntu-24.04` (runner chuẩn, miễn phí cho repo public), `/actions/permissions` = `enabled: true`, và **`starter.yml` của giảng viên cũng fail y hệt cùng lúc** → chặn ở cấp tài khoản. Không có thay đổi code nào gỡ được. Xem `evidence/day3-submission.md` |
+| MH9 | Pipeline green trên PR | dòng 833 | 🔄 **đang xác minh lại** — xem mục Q.6. Lần chạy đầu (run `36532890593`, `36536653766`) fail vì **GitHub Actions bị chặn ở cấp tài khoản**: 8/8 job fail sau 6s, chưa job nào được cấp runner, annotation *"recent account payments have failed or your spending limit needs to be increased"*. Đã chẩn đoán chỉ-đọc và loại trừ nguyên nhân từ code (mọi `runs-on` là `ubuntu-24.04` — runner chuẩn miễn phí cho repo public; `/actions/permissions` = `enabled: true`; **`starter.yml` của giảng viên cũng fail y hệt cùng lúc**). Chủ repo đã gỡ chặn billing lúc ~15:15 (+07) và pipeline chạy lại được — kết quả cuối ghi ở Q.6 |
 | MH10 | InsightHub Helm deploy | dòng 834 | ✅ **xong cả local lẫn AWS**. AWS (2026-09-29): `helm upgrade --install` chart `insighthub` lên ns `insighthub-dev` với `values-dev.yaml` + image digest ECR + `certificate_arn` + `--set-file migration.initSql`; 4/4 pod Running, HPA đọc CPU, Ingress cấp ALB. Chart `insighthub-local-deps` **cố ý KHÔNG cài lên EKS** (Postgres=RDS, Redis=ElastiCache). Local trước đó — 2 chart ở `infra/helm/` (`insighthub`, `insighthub-local-deps`), đã `helm upgrade` thật trên kind `insighthub-lab` ns `insighthub-local` (2026-09-29): 5/5 pod Running, smoke curl `/healthz` 200 · `/readyz` 200 · `POST /documents` 202 · status `ready` <2s · `POST /chat` 200 kèm `sources`; UI kiểm trên trình duyệt OK. Trên EKS chưa deploy (cần apply core+platform trước). Theo Guide local-first: **local PASS không tính là hoàn thành AWS** |
 | MH11 | Smoke test upload+chat | dòng 835 | ✅ **xong trên HTTPS domain thật** `https://insighthub-lamduy.do2603.click`: `/healthz` 200 · `POST /documents` (PDF có text) **202 trong 0.21s** (SLA <1.0s) · status `ready` sau **1.7s** (SLA <30s) · `POST /chat` 200 kèm `sources` trích đúng PDF vừa upload. Thêm: HTTP→HTTPS 301, `/` (web) 200, `/metrics` 404 (không public). Output `evidence/day3-smoke-https.txt` |
 | MH12 | `tflint --recursive` no warnings | dòng 836 | ✅ xong — đã chạy lại trên cả module chính + `infra/bootstrap/github-oidc/`: 0 errors, 0 warnings |
-| MH13 | `checkov` no HIGH | dòng 837 | ✅ `checkov -d infra/` → **687 passed, 0 failed, 56 skipped, exit 0** (2026-09-29; số cũ 157/0/24 là khi chưa có Helm chart trong `infra/`) — phần `terraform` 163/0/**25** (thêm CKV_AWS_339 khi pin `eks_version`, SPEC Mục 10), `helm` 511/0/**31**, `kubernetes` 13/0/0. Mọi finding bỏ qua đều là `#checkov:skip` / `checkov.io/skip<n>` gắn tại resource kèm lý do (SPEC Mục 10 + 10b), không `--skip-check` toàn cục, không `--soft-fail`. Vẫn thiếu xác nhận độc lập severity "không HIGH" cho các finding skip (checkov OSS không trả field `severity`), nhưng exit code 0 nên job security-scan trong pipeline sẽ xanh. |
+| MH13 | `checkov` no HIGH | dòng 837 | ✅ `checkov -d infra/` → **684 passed, 0 failed, 59 skipped, exit 0** (2026-09-29; số cũ 157/0/24 là khi chưa có Helm chart trong `infra/`) — phần `terraform` 163/0/**25**, `helm` 508/0/**34**, `kubernetes` 13/0/0. Mọi finding bỏ qua đều là `#checkov:skip` / `checkov.io/skip<n>` gắn tại resource kèm lý do (SPEC Mục 10 + 10b), không `--skip-check` toàn cục, không `--soft-fail`. Vẫn thiếu xác nhận độc lập severity "không HIGH" cho các finding skip (checkov OSS không trả field `severity`), nhưng exit code 0 nên job security-scan trong pipeline sẽ xanh. |
 | MH14 | All resources tagged | dòng 838 | ✅ **xác minh trên AWS thật**: Tagging API trả **29 ARN** mang `LabId=day3-terraform`, đủ 8 tag (`project, environment, owner, cost_center, managed_by, Class, LabId, ExpiresAt`) — `evidence/day3-mh14-tags.txt`. Lưu ý trung thực: `aws_iam_role_policy`, `aws_iam_role_policy_attachment`, `aws_kms_alias`, `aws_eks_access_policy_association` **không nhận tag** (API không có trường tag), không phải bỏ sót. Áp dụng quyết định J.1 — `owner` (chữ thường) duy nhất trong `common_tags`, không còn `Owner`. Module bootstrap dùng tag scheme riêng có chủ đích (xem SPEC.md mục 2, phần Tagging) |
 
 ## B. Non-functional (§7.3, dòng 802-809)
@@ -33,7 +33,7 @@ Checklist duy nhất cho Day 3, trích từ tài liệu gốc và code verifier.
 | # | Yêu cầu | Trạng thái |
 |---|---|---|
 | 1 | `tflint --recursive` no warnings | ✅ xong |
-| 2 | `checkov -d infra/` no HIGH | ✅ 687 passed, 0 failed, 56 skipped kèm lý do inline (xem mục A/MH13) |
+| 2 | `checkov -d infra/` no HIGH | ✅ 684 passed, 0 failed, 59 skipped kèm lý do inline (xem mục A/MH13). Thêm: job `security-scan` quét **bản render dev** riêng → 336 passed, 0 failed, 27 skipped |
 | 3 | `conftest test ... tfplan.json` pass — **bắt buộc** (không phải Should-have, xem mục H) | ✅ local (2026-09-25) — `infra/policy/terraform/main.rego` (18 rule `deny`, Rego v1) + `main_test.rego` (`conftest verify`: 23/23 pass). Chạy trên plan thật (`terraform show -json tfplan`): **19 passed, 0 failures** (2026-09-29, plan core 50 to add). Danh sách rule + lý do helper `is_true`: `infra/SPEC.md` Mục 11. ⚠️ Pipeline CI (`iac.yml`) chưa có — CI phải cài Conftest 0.70.x. |
 | 4 | Tags: project, environment, owner, cost_center, managed_by | ✅ áp dụng quyết định J.1 |
 | 5 | Pipeline OIDC AWS (no long-lived keys) | ✅ bootstrap **đã apply thật** (12 resource): 2 role `gh_plan`/`gh_apply` trust theo `sub=...:environment:infra-plan|production` (StringEquals, không wildcard), KMS key cho saved plan. OIDC provider chuyển sang **data source** (xem J.6). ⚠️ chưa chứng minh được end-to-end vì Actions bị chặn billing (MH9). Lịch sử: code xong, chưa apply — `infra/bootstrap/github-oidc/` có OIDC provider + 2 role (`gh_plan`/`gh_apply`), `terraform plan` sạch (10 to add); chưa apply nên GitHub Actions thật vẫn chưa dùng được. Mọi apply thủ công hôm nay vẫn qua IAM user `DE000215` (long-lived key), hợp lệ cho thao tác thủ công. |
@@ -330,10 +330,19 @@ Non-root trên K8s: `USER` trong image là **tên** → với `runAsNonRoot: tru
 ### Q.1 Bối cảnh: apply từ local, KHÔNG qua CI
 
 Ghi trung thực để reviewer không hiểu nhầm: hạ tầng lượt này **apply bằng IAM
-user `DE000215` từ máy local**, không qua GitHub Actions, vì Actions bị chặn ở
-cấp tài khoản (billing) đúng lúc chạy — xem MH9 ở mục A. Workflow đã viết đủ và
-PR đã mở; `workflow_dispatch` sẽ chạy được ngay khi billing thông. Lý do này
-cũng ghi trong `evidence/day3-lab2-manifest.json` trường `apply_method_reason`.
+user `DE000215` từ máy local**, không qua GitHub Actions.
+
+Lý do tại thời điểm chạy (khoảng 13:50–15:10 +07): GitHub Actions bị chặn ở cấp
+tài khoản vì vấn đề thanh toán, mọi job fail sau 6 giây trước cả khi được cấp
+runner. Đợi thì hết giờ lab, nên chọn apply local và ghi lại lý do thay vì bỏ
+trống MH3/MH6/MH10/MH11/MH14.
+
+**Cập nhật ~15:15 (+07)**: chủ repo đã gỡ chặn billing, pipeline chạy lại được
+(Q.6). Nhưng phần hạ tầng AWS thì **vẫn là apply từ local** — không sửa lại mô
+tả này cho đẹp, vì đó là điều đã thực sự xảy ra. Nếu cần chứng minh apply qua
+CI thì phải chạy thêm một lượt lab nữa qua `workflow_dispatch`, và lượt đó
+chưa chạy. Lý do này cũng ghi trong `evidence/day3-lab2-manifest.json` trường
+`apply_method_reason`.
 
 ### Q.2 Trình tự đã chạy
 

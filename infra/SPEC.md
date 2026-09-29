@@ -536,11 +536,16 @@ Kết quả sau khi xử lý — `checkov -d infra/`:
 **687 passed, 0 failed, 56 skipped, exit code 0**
 (`terraform` 163/0/25 · `helm` 511/0/31 · `kubernetes` 13/0/0).
 
-Cập nhật 2026-09-29: `terraform` +1 skip (CKV_AWS_339, Mục 10); `helm` +1 skip
-và +1 passed do ServiceAccount `insighthub` chuyển từ chart app sang chart
-`insighthub-local-deps` (Mục 13) — SA giờ nằm trong bản render mặc định của
-local-deps nên bị CKV_K8S_21 soi, cùng dương tính giả namespace `default` như
-các resource khác của 2 chart.
+Cập nhật 2026-09-29 (sau khi chạy CI thật) — `checkov -d infra/`:
+**684 passed, 0 failed, 59 skipped, exit 0** (`terraform` 163/0/25 ·
+`helm` 508/0/34 · `kubernetes` 13/0/0). Ba thay đổi so với lần trước:
+
+| Thay đổi | Ảnh hưởng |
+|---|---|
+| CKV_AWS_339 (Mục 10) | `terraform` +1 skip |
+| ServiceAccount `insighthub` chuyển sang chart `insighthub-local-deps` (Mục 13) | `helm` +1 skip — SA giờ nằm trong bản render mặc định của local-deps nên bị CKV_K8S_21 soi |
+| **CKV_K8S_15 ×3** trên Deployment web/api/worker | `helm` +3 skip. `values-dev` đặt `pullPolicy: IfNotPresent` có chủ đích: deploy thật luôn truyền `image.<svc>.digest` (Mục 12) nên tham chiếu đã bất biến, kéo lại image mỗi lần restart chỉ tốn thời gian và quota ECR mà không đổi gì. Values mặc định vẫn là `Always` cho môi trường chưa biết. **Chỉ lộ ra ở bản render dev** — bản render mặc định dùng `Always` nên luôn PASS |
+| **CKV_K8S_21 trên `Ingress`** | `helm` +1 skip. Annotation `checkov.io/skip` bị **quên** ở đúng resource duy nhất không xuất hiện trong bản render mặc định |
 
 ## 11. Policy-as-code — Conftest (`infra/policy/terraform/`)
 
@@ -726,13 +731,25 @@ bao giờ được quét**. Đây là lỗ hổng phạm vi không vá được 
 thêm một bước riêng:
 
 ```bash
-helm template insighthub infra/helm/insighthub \
+helm template insighthub infra/helm/insighthub -n insighthub-dev \
   -f infra/helm/insighthub/values-dev.yaml \
   --set image.api.tag=ci --set image.web.tag=ci --set image.worker.tag=ci \
   --set-file migration.initSql=infra/db/init.sql \
   > "$RUNNER_TEMP/render-dev/manifests.yaml"
 checkov -d "$RUNNER_TEMP/render-dev" --framework kubernetes   # exit phải = 0
 ```
+
+`-n insighthub-dev` ở đây để bản render sát thực tế (một số template dùng
+`.Release.Namespace`, ví dụ `API_INTERNAL_URL` của web). **Nó KHÔNG giải quyết
+được CKV_K8S_21**: Helm không ghi `metadata.namespace` vào manifest, nên checkov
+vẫn thấy `default` dù có `-n`. Đã đo thật 2026-09-29 — giả thuyết "truyền `-n`
+là hết dương tính giả" **sai**, vẫn phải dùng `checkov.io/skip` như mọi resource
+khác.
+
+Job này từng đỏ vì đúng một lý do: `Ingress` là resource **duy nhất chỉ xuất
+hiện trong bản render dev**, và nó là resource duy nhất bị **quên** annotation
+`checkov.io/skip` cho CKV_K8S_21. Chính lỗ hổng phạm vi mà job này sinh ra để
+vá đã lộ ra một suppression còn thiếu — đúng mục đích của nó.
 
 `values-dev.yaml` đã chứa sẵn ARN/cert giả (account `000000000000`,
 `certificate/0000…`) đủ để qua guard mà không lộ giá trị thật. Bước này chạy

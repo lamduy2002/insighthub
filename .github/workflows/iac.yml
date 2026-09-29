@@ -109,7 +109,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/render-dev"
-          helm template insighthub infra/helm/insighthub \
+          # -n insighthub-dev: buoc nay tu goi helm nen truyen duoc namespace that,
+          # khac voi luc checkov tu goi `helm template` (khong co -n) o buoc tren.
+          # Nho vay CKV_K8S_21 o day khong phai duong tinh gia can suppress.
+          helm template insighthub infra/helm/insighthub -n insighthub-dev \
             -f infra/helm/insighthub/values-dev.yaml \
             --set image.api.tag=ci --set image.web.tag=ci --set image.worker.tag=ci \
             --set-file migration.initSql=infra/db/init.sql \
