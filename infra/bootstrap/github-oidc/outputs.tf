@@ -1,6 +1,6 @@
 output "github_oidc_provider_arn" {
   description = "ARN của GitHub Actions OIDC provider (dùng chung cả lớp DO2603)."
-  value       = aws_iam_openid_connect_provider.github_actions.arn
+  value       = data.aws_iam_openid_connect_provider.github_actions.arn
 }
 
 output "gh_plan_role_arn" {

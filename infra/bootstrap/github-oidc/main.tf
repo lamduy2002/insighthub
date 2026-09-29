@@ -3,40 +3,31 @@ data "aws_caller_identity" "current" {}
 # ============================================================
 # OIDC Provider cho GitHub Actions — resource CẤP ACCOUNT DÙNG CHUNG
 # ============================================================
-# AWS chỉ cho phép 1 provider/URL issuer trên mỗi account. Trước khi viết
-# module này đã chạy `aws iam list-open-id-connect-providers` xác nhận CHƯA
-# có provider nào cho token.actions.githubusercontent.com trên account này
-# (chỉ có 6 provider OIDC của EKS cluster do học viên khác tạo) — an toàn để
-# tạo mới ở đây.
+# AWS chỉ cho phép 1 provider/URL issuer trên mỗi account, nên provider này
+# KHÔNG thuộc sở hữu của lượt lab nào. Thực tế (2026-09-29) một học viên khác
+# đã tạo trước (tag `owner = DO-NGOC-VINH`) — quản lý nó bằng `resource` ở
+# đây sẽ ghi đè tag sở hữu và `lab_expiry` của họ mỗi lần apply, tức là phá
+# dấu vết truy trách nhiệm cleanup mà Guide Local/AWS Cost yêu cầu.
 #
-# Nếu học viên khác trong lớp apply song song và gặp lỗi EntityAlreadyExists:
-# KHÔNG sửa code để tạo lại — chạy:
-#   terraform import aws_iam_openid_connect_provider.github_actions \
-#     arn:aws:iam::<account_id>:oidc-provider/token.actions.githubusercontent.com
-# rồi apply lại bình thường (SPEC.md ghi chi tiết quy trình).
-data "tls_certificate" "github_actions" {
+# Vì vậy: chỉ THAM CHIẾU bằng data source (cùng nguyên tắc đã áp cho ACM cert
+# `*.do2603.click` ở root core — xem SPEC.md Mục 2, Load Balancing). Hệ quả:
+# root này không tạo, không sửa, không xóa provider; ai tạo nó thì người đó
+# chịu trách nhiệm vòng đời. Nếu provider chưa tồn tại trên account, tạo một
+# lần bằng CLI rồi apply lại:
+#   aws iam create-open-id-connect-provider \
+#     --url https://token.actions.githubusercontent.com \
+#     --client-id-list sts.amazonaws.com
+#
+# Rủi ro đã biết, không xử lý được bằng code: chủ sở hữu provider có thể xóa
+# nó bất cứ lúc nào (tag `lab_expiry` của họ là 2026-09-29T12:00:00Z) — khi đó
+# trust policy của 2 role dưới đây mất hiệu lực và plan sẽ fail ngay ở data
+# source này (fail-fast, đúng mong muốn).
+data "aws_iam_openid_connect_provider" "github_actions" {
   url = "https://token.actions.githubusercontent.com"
 }
 
-resource "aws_iam_openid_connect_provider" "github_actions" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.github_actions.certificates[0].sha1_fingerprint]
-
-  tags = local.common_tags
-
-  # KHÔNG destroy theo lượt lab — role của học viên khác (nếu có) có thể
-  # đang trust provider này. Trước khi gỡ thủ công cuối Day 3 phải chạy
-  # `aws iam list-roles` rồi lọc AssumeRolePolicyDocument tham chiếu ARN
-  # provider này, chỉ gỡ khi chắc chắn không còn role nào khác trust nó
-  # (xem infra/SPEC.md).
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
 locals {
-  gh_oidc_host = replace(aws_iam_openid_connect_provider.github_actions.url, "https://", "")
+  gh_oidc_host = replace(data.aws_iam_openid_connect_provider.github_actions.url, "https://", "")
   account_id   = data.aws_caller_identity.current.account_id
 
   state_bucket_arn  = "arn:aws:s3:::${var.state_bucket}"
@@ -57,7 +48,7 @@ resource "aws_iam_role" "gh_plan" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Federated = aws_iam_openid_connect_provider.github_actions.arn }
+      Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
@@ -147,7 +138,7 @@ resource "aws_iam_role" "gh_apply" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Federated = aws_iam_openid_connect_provider.github_actions.arn }
+      Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
