@@ -118,9 +118,11 @@ resource "aws_iam_role_policy_attachment" "eks_node_ecr_readonly" {
 resource "aws_eks_cluster" "lab" {
   #checkov:skip=CKV_AWS_39:Khong tat hoan toan endpoint public vi CI dung GitHub-hosted runner va chua co VPN/bastion - da gioi han public_access_cidrs theo var.admin_cidrs - xem SPEC.md muc 10
   #checkov:skip=CKV_AWS_37:Full control-plane logging phat sinh chi phi CloudWatch Logs lien tuc, khong can cho lab ngan han - xem SPEC.md muc 10
+  #checkov:skip=CKV_AWS_339:Danh sach version hop le bi hardcode trong checkov 3.3.19 (EKSPlatformVersion.py) chi toi 1.35; 1.36 la defaultVersion cua AWS va con STANDARD_SUPPORT toi 2027-08-02 (aws eks describe-cluster-versions) - duong tinh gia do tool loi thoi - xem SPEC.md muc 10
   #checkov:skip=CKV_AWS_38:public_access_cidrs lay tu var.admin_cidrs (bat buoc truyen, validation tu choi 0.0.0.0/0 va ::/0) nhung checkov khong resolve tinh duoc - Conftest kiem tra gia tri that tren plan JSON - xem SPEC.md muc 10/11
   name     = var.eks_cluster_name
   role_arn = aws_iam_role.eks_cluster.arn
+  version  = var.eks_version
 
   vpc_config {
     subnet_ids             = var.subnet_ids

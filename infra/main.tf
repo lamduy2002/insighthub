@@ -46,6 +46,7 @@ module "eks" {
   subnet_ids                   = module.network.public_subnet_ids
   admin_cidrs                  = var.admin_cidrs
   cluster_admin_principal_arns = distinct(concat([var.ci_apply_role_arn], var.operator_principal_arns))
+  eks_version                  = var.eks_version
   node_instance_type           = var.eks_node_instance_type
   node_desired_size            = var.eks_node_desired_size
   tags                         = local.common_tags

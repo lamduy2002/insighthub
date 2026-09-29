@@ -95,6 +95,12 @@ variable "eks_cluster_name" {
   default     = "insighthub-lab"
 }
 
+variable "eks_version" {
+  description = "Phiên bản Kubernetes của EKS control plane. Pin tường minh thay vì để AWS chọn default — default của AWS đổi theo thời gian nên plan không còn deterministic giữa 2 lần chạy. Xác nhận bằng `aws eks describe-cluster-versions --region ap-southeast-1` (2026-09-29): 1.36 là defaultVersion, STANDARD_SUPPORT tới 2027-08-02."
+  type        = string
+  default     = "1.36"
+}
+
 variable "eks_node_instance_type" {
   description = "Instance type cho EKS managed node group."
   type        = string

@@ -23,6 +23,11 @@ variable "cluster_admin_principal_arns" {
   type        = list(string)
 }
 
+variable "eks_version" {
+  description = "Phiên bản Kubernetes của control plane (pin ở root, không để AWS chọn default)."
+  type        = string
+}
+
 variable "node_instance_type" {
   description = "Instance type cho managed node group."
   type        = string
