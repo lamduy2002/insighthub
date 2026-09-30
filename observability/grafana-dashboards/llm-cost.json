@@ -1,0 +1,201 @@
+{
+ "uid": "llm-cost",
+ "title": "InsightHub LLM Cost & Gateway",
+ "description": "Day 6 FinOps: cost rate, spend, budgets and traffic of the LiteLLM gateway (scraped from litellm:4000/metrics/).",
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": true,
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "refresh": "30s",
+ "tags": [
+  "insighthub",
+  "day6",
+  "finops"
+ ],
+ "panels": [
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "LLM Cost",
+   "description": "Cost rate in USD per hour by virtual key (api_key_alias): rate of litellm_spend_metric_total x 3600. LiteLLM shadow price (assumed, not a bill): Ollama has no provider fee; see security/MODELS.md.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (api_key_alias) (rate(litellm_spend_metric_total[5m])) * 3600",
+     "legendFormat": "{{api_key_alias}}",
+     "refId": "A",
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "LLM spend by key (cumulative)",
+   "description": "Cumulative spend since gateway start by key. LiteLLM shadow price (assumed, not a bill): Ollama has no provider fee; see security/MODELS.md.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (api_key_alias) (litellm_spend_metric_total)",
+     "legendFormat": "{{api_key_alias}}",
+     "refId": "A",
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Budget remaining by key",
+   "description": "litellm_remaining_api_key_budget_metric: what is left of each key's max_budget.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "litellm_remaining_api_key_budget_metric",
+     "legendFormat": "{{api_key_alias}}",
+     "refId": "A",
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 4,
+   "type": "timeseries",
+   "title": "Tokens per second by key and direction",
+   "description": "Input/output tokens per second through the gateway.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (api_key_alias) (rate(litellm_input_tokens_metric_total[5m])) or sum by (api_key_alias) (rate(litellm_output_tokens_metric_total[5m]))",
+     "legendFormat": "{{api_key_alias}}",
+     "refId": "A",
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Requests and failures per second",
+   "description": "Total vs failed (budget denial, guardrail block, provider error) requests at the gateway.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 16,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(litellm_proxy_total_requests_metric_total[5m]))",
+     "legendFormat": "total",
+     "refId": "A",
+     "editorMode": "code"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(litellm_proxy_failed_requests_metric_total[5m]))",
+     "legendFormat": "failed",
+     "refId": "B",
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  }
+ ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "insighthub-security",
+  "private": true,
+  "description": "Day 6 red team tooling (Promptfoo pinned).",
+  "devDependencies": {
+    "promptfoo": "0.123.1"
+  }
+}
