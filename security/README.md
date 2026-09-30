@@ -8,8 +8,8 @@ digests are in [MODELS.md](MODELS.md); the threat model is [threat-model.md](thr
 | Path | What |
 |---|---|
 | `promptfooconfig.yaml`, `redteam.yaml`, `providers/insighthub.js` | Promptfoo 0.123.1 red team (8 plugins, 63 generated cases). The provider uploads the untrusted `{{doc}}` through `/documents`, waits for ingestion, asks `/chat`, then deletes the document |
-| `dataset.json`, `eval/harness.py` | Frozen deterministic dataset (22 cases: attacks + benign regression) and the live runner used by the verifier tests |
-| `litellm/config.yaml`, `litellm/guardrails/` | Gateway models, shadow prices, Prometheus callback, `litellm_content_filter` guardrails |
+| `dataset.json`, `eval/harness.py` | Frozen deterministic dataset (20 cases: attacks + benign regression) and the live runner used by the verifier tests |
+| `litellm/config.yaml` | Gateway models, shadow prices, Prometheus callback, `litellm_content_filter` guardrails |
 | `../tests/milestones/day6/` | Verifier tests (`test_injection_blocked`, `test_benign_allowed`, `test_budget_enforced` + extras) |
 
 ## Coverage mapping (plugin IDs verified with `promptfoo redteam plugins` on the pinned version)
