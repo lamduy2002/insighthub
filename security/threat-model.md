@@ -23,7 +23,7 @@ talks to a model provider directly: `OPENAI_BASE_URL` points at the gateway and 
 | 1 | Input / ingestion | `api/app/services/sanitize.py`: assistant-directed paragraphs replaced before chunking (EN/VI); 10 MB upload cap | implemented, unit-tested |
 | 2 | Retrieval | suspicious chunks dropped again at query time (covers chunks indexed before the fix) | implemented, unit-tested |
 | 3 | Prompt | instruction-hierarchy system prompt, documents as JSON data, reminder after the documents, no tools | implemented |
-| 4 | Gateway guardrail | LiteLLM `litellm_content_filter` `pre_call` (injection categories EN + Vietnamese keyword file, email MASK, key-shape BLOCK) and `post_call` blocked word | implemented, runtime-tested (allowed/blocked) |
+| 4 | Gateway guardrail | LiteLLM `litellm_content_filter` `pre_call` (injection categories EN + Vietnamese blocked-word list, email MASK, key-shape BLOCK) and `post_call` blocked word | implemented, runtime-tested (allowed/blocked) |
 | 5 | Output | `redact_leaks`: hidden-rule text, secret names, forced attack string → fixed refusal | implemented, unit-tested |
 | 6 | Governance | per-key budgets, tags, spend logs, structured audit log of every LLM call, bot 3-tier permissions + approval (Day 5) | implemented, budget tested |
 

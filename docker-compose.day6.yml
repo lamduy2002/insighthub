@@ -34,6 +34,11 @@ services:
     volumes:
       - ./security/litellm/config.yaml:/app/config.yaml:ro
     ports: ["127.0.0.1:4000:4000"]
+    # Fixed address on the kind docker network so the Day 4 Prometheus can scrape /metrics (Endpoints object).
+    networks:
+      default: {}
+      kind:
+        ipv4_address: 172.18.0.50
     depends_on:
       litellm-db: {condition: service_healthy}
       ollama: {condition: service_healthy}
@@ -50,5 +55,8 @@ services:
   ingestion-worker:
     depends_on:
       litellm: {condition: service_healthy}
+networks:
+  kind:
+    external: true
 volumes:
   litellmdata:
