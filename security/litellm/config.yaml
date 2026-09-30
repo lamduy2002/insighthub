@@ -1,0 +1,23 @@
+# LiteLLM gateway config (pinned image v1.103.1). Models are local Ollama (real provider, no API fee).
+# input/output_cost_per_token are SHADOW prices (assumed, not a bill): Ollama reports cost 0, which
+# would make max_budget unenforceable. Shadow pricing lets budgets, attribution and the dashboard work.
+model_list:
+  - model_name: chat-small
+    litellm_params:
+      model: ollama_chat/qwen2.5:0.5b
+      api_base: http://ollama:11434
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.0000006
+  - model_name: embed-mxbai
+    litellm_params:
+      model: ollama/mxbai-embed-large
+      api_base: http://ollama:11434
+      input_cost_per_token: 0.00000002
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+  callbacks: ["prometheus"]
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  proxy_batch_write_at: 10

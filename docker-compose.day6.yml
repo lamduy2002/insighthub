@@ -1,0 +1,54 @@
+# Day 6 overlay: LiteLLM gateway + Ollama (real local provider) for InsightHub.
+# Run: docker compose -p insighthub-day6 --profile ollama -f docker-compose.yml -f docker-compose.day6.yml up -d --wait \
+#        postgres redis ollama litellm-db litellm api ingestion-worker
+# Separate project name => separate volumes (new embedding space), Day 4 kind cluster untouched.
+services:
+  ollama:
+    mem_limit: 1400m
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_KEEP_ALIVE: "2m"
+  litellm-db:
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    volumes:
+      - litellmdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: 256m
+  litellm:
+    image: ghcr.io/berriai/litellm@sha256:df15400b5b80925c45d3fd53f8f7a6c0eaa8a25a86833e1b358002e129018943  # v1.103.1
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    environment:
+      DATABASE_URL: postgresql://litellm:litellm@litellm-db:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set in .env}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set in .env}
+      STORE_MODEL_IN_DB: "False"
+    volumes:
+      - ./security/litellm/config.yaml:/app/config.yaml:ro
+    ports: ["127.0.0.1:4000:4000"]
+    depends_on:
+      litellm-db: {condition: service_healthy}
+      ollama: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:4000/health/liveliness',timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+    mem_limit: 1200m
+  api:
+    depends_on:
+      litellm: {condition: service_healthy}
+  ingestion-worker:
+    depends_on:
+      litellm: {condition: service_healthy}
+volumes:
+  litellmdata:
