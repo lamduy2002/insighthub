@@ -57,7 +57,7 @@ Mỗi alert đã được Alertmanager gửi tới Slack `#alerts` (FIRING và R
 - **ingestion-worker quan sát gián tiếp** (cAdvisor + kube-state-metrics + `redis_key_size`), không có endpoint `/metrics`; không sửa code Day 1 (spec §0.4).
 - **Incident 1 là độ trễ được tiêm**, không phải provider chậm thật (`RAG_MODE=fixture`); panel token và cost là **ước lượng, fixture mode**.
 - Quiz MH11 không nộp.
-- PR #3 xếp chồng lên PR #2 (Day 3) — diff vào `main` gồm cả Day 3 cho tới khi #2 merge.
+- PR #3 xếp chồng trên PR #2 (Day 3): base là `day3-terraform` nên chỉ gồm các commit Day 4. PR #2 được giữ mở làm bằng chứng MH9 Day 3, không merge.
 - Verify phải chạy khi Prometheus còn sống; RCA hết "tươi" (≤24h) lúc 2026-09-30T19:05Z (incident 1). Output PASS ở trên là bằng chứng nếu chạy lại sau mốc đó.
 
 ## 5. Hướng dẫn tái lập (từ code và dữ liệu mẫu)

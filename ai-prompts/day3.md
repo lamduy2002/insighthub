@@ -9,7 +9,7 @@ viên — chép sao lại đúng như đã gửi, kể cả chỗ viết tắt v
 ## Prompt 1 - Đóng 3 việc còn dở của Terraform/Helm, dừng lại khi có quyết định thiết kế
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5, Claude Pro subscription
+**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5, Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: `infra/main.tf`, `infra/outputs.tf`, `infra/variables.tf`, `infra/modules/eks/`, `infra/helm/insighthub/`, `infra/helm/insighthub-local-deps/`, `infra/SPEC.md`, `infra/DAY3-CHECKLIST.md`; cluster kind `insighthub-lab` đang chạy release cũ
 **Time**: 29/09/2026, ~11:30 (+07)
 
@@ -53,7 +53,7 @@ viên — chép sao lại đúng như đã gửi, kể cả chỗ viết tắt v
 ## Prompt 2 - Giao toàn bộ MH1-MH14 kèm ngân sách thời gian và quyền tự chạy
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5, Claude Pro subscription
+**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5, Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: `infra/SPEC.md` Mục 12 (thiết kế CI), `infra/bootstrap/github-oidc/`, `scripts/verify.py`, `scripts/package-chart.sh`, `Running-Project-Specification-Student.md` §7.4/§7.5
 **Time**: 29/09/2026, ~13:35 (+07)
 
@@ -106,7 +106,7 @@ Ràng buộc: commit + push sau mỗi phần. Nguồn source phải đóng băng
 ## Prompt 3 - Ép chẩn đoán có bằng chứng, cấm sửa mò
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5, Claude Pro subscription
+**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5, Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: run `36532890593` (8/8 job fail sau 6s), `.github/workflows/iac.yml`, `.github/workflows/starter.yml`, GitHub REST API (`/actions/runs/.../jobs`, `/actions/permissions`)
 **Time**: 29/09/2026, ~13:50 (+07)
 
@@ -143,7 +143,7 @@ Nghi vấn chính: runs-on không phải ubuntu-latest → GitHub tính phí dù
 ## Prompt 4 - Teardown theo đúng trình tự, kèm danh sách cấm đụng
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5, Claude Pro subscription
+**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5, Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: `infra/SPEC.md` Mục 8, `evidence/day3-lab2-manifest.json`, `evidence/day3-route53-record.json`, `docs/Guide_Local_AWS_Cost_DO2603.md`
 **Time**: 29/09/2026, ~14:55 (+07)
 

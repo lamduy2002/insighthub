@@ -10,7 +10,7 @@ và giờ lấy từ chính bản ghi của phiên, không nhớ lại.
 ## Prompt 1 - Dựng stack quan sát trước, khảo sát verifier song song, trình bày checklist rồi mới ghi file
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5 (`claude-opus-5`), Claude Pro subscription (giữ như Day 3; phiên này không hiển thị lại nên cần người dùng xác nhận)
+**Version / Model / Auth mode**: Claude Code v2.1.284, Opus 5 (`claude-opus-5`), Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: `Running-Project-Specification-Student.md` §0, 2.3, 2.5, 4, 8; `scripts/verify.py` (day4 638-662, verify_rca_component 593-635, validate_rule_tests 563-590); `api/app/core/metrics.py`; `ingestion-worker/`; `observability/README.md`; `docs/lab-guides/Day4-AIOps-Observability.md`. Kết quả: `observability/monitoring/kube-prometheus-stack.values.yaml`, `observability/k8s/servicemonitor-api.yaml`, bản nháp checklist trình trong chat.
 **Time**: 29/09/2026, 19:49 (+07)
 
@@ -68,7 +68,7 @@ Trình bày checklist cho tôi duyệt TRƯỚC KHI ghi file. Không code gì �
 ## Prompt 2 - Chốt 3 quyết định thiết kế, cắt phạm vi, giao 5 bước theo thứ tự có mốc báo cáo
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Pro subscription (giữ như Day 3; phiên này không hiển thị lại nên cần người dùng xác nhận)
+**Version / Model / Auth mode**: Claude Code v2.1.284, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: `infra/DAY4-CHECKLIST.md`, `observability/prometheus-rules/anomaly-rules.yaml` + `anomaly-rules_test.yaml`, `observability/k8s/exporters.yaml`, `scripts/chaos/*.sh`, `observability/grafana-dashboards/insighthub-red.json`; log `promtool check/test rules` exit 0 (chạy 3 lần).
 **Time**: 29/09/2026, 20:05 (+07)
 
@@ -108,7 +108,7 @@ Báo tôi sau mỗi bước bằng 3-5 dòng. Sau bước 5 dừng lại, lúc �
 ## Prompt 3 - 7 việc không đụng baseline trong lúc chờ đủ 1h
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Pro subscription (giữ như Day 3; phiên này không hiển thị lại nên cần người dùng xác nhận)
+**Version / Model / Auth mode**: Claude Code v2.1.284, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: Commit `e36c638`, `ee6d5cc`; `observability/k8s/blackbox.yaml`, `observability/k8s/mcp-readonly-rbac.yaml`, `scripts/chaos/harvest-samples.py`, `observability/rca-prompt.md`, `observability/monitoring/alertmanager-slack.values.yaml`, `observability/mlops-overview-notes.md` (bản nháp).
 **Time**: 29/09/2026, 20:40 (+07)
 
@@ -140,7 +140,7 @@ Báo ngắn sau mỗi mục. 20:56 dừng lại báo tôi để chạy incident 
 ## Prompt 4 - Áp Secret Slack có sẵn và thay mật khẩu Grafana đã lộ, chỉ một lần helm upgrade
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Pro subscription (giữ như Day 3; phiên này không hiển thị lại nên cần người dùng xác nhận)
+**Version / Model / Auth mode**: Claude Code v2.1.284, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: `observability/monitoring/apply-alertmanager-slack.sh`, `create-grafana-admin-secret.sh`, `kube-prometheus-stack.values.yaml`; commit `d1a5284`; số scrape trước/sau upgrade từ Prometheus.
 **Time**: 29/09/2026, 20:57 (+07)
 
@@ -177,7 +177,7 @@ Khi count scrape up{job="insighthub-api"} ≥115 thì báo tôi, CHƯA tự ch�
 ## Prompt 5 - Chạy 3 incident, RCA bằng subagent mù, đối chiếu sau
 
 **Host**: Claude Code
-**Version / Model / Auth mode**: Claude Code v2.1.284, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Pro subscription (giữ như Day 3; phiên này không hiển thị lại nên cần người dùng xác nhận)
+**Version / Model / Auth mode**: Claude Code v2.1.284, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Team subscription (đăng nhập claude.ai, không dùng API key)
 **Context / Evidence**: `scripts/chaos/inject-*.sh`, `evidence/chaos-*-window.json`, `evidence/incident-{1,2,3}.json`, `observability/rca-prompt.md`; 43 sample khớp `query_range`.
 **Time**: 30/09/2026, 02:20 (+07)
 
