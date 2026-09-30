@@ -1,0 +1,96 @@
+{
+ "observed_at": "2026-09-30T13:23:27Z",
+ "real_keys": {
+  "insighthub": {
+   "max_budget": 1.2,
+   "spend_before": 0.04047215000000003,
+   "spend_after_allowed_call": 0.04048175000000003,
+   "allowed_call": {
+    "status": 200,
+    "request_id": "7989eacf-38da-4960-bd1c-2b5b33d574f2",
+    "error": null
+   },
+   "denied_call_with_cap_below_spend": {
+    "status": 429,
+    "request_id": null,
+    "error": "{\"error\": {\"message\": \"Budget has been exceeded! Key=insighthub (sk-...Lqog) Current cost: 0.04048175000000004, Max budget: 0.020240875\", \"type\": \"budget_exceeded\", \"param\": null, \"code\": \"429\"}}"
+   },
+   "budget_restored": true
+  },
+  "chatops-bot": {
+   "max_budget": 0.3,
+   "spend_before": 0.0001791,
+   "spend_after_allowed_call": 0.0001887,
+   "allowed_call": {
+    "status": 200,
+    "request_id": "3ceae377-042e-4c57-bd71-199befb09a73",
+    "error": null
+   },
+   "denied_call_with_cap_below_spend": {
+    "status": 429,
+    "request_id": null,
+    "error": "{\"error\": {\"message\": \"Budget has been exceeded! Key=chatops-bot (sk-...U2ug) Current cost: 0.00018869999999999998, Max budget: 9.435e-05\", \"type\": \"budget_exceeded\", \"param\": null, \"code\": \"429\"}}"
+   },
+   "budget_restored": true
+  },
+  "coding-workflow": {
+   "max_budget": 0.5,
+   "spend_before": 0.0001242,
+   "spend_after_allowed_call": 0.0001338,
+   "allowed_call": {
+    "status": 200,
+    "request_id": "76f6390d-ea98-40da-b607-8f9c1baac000",
+    "error": null
+   },
+   "denied_call_with_cap_below_spend": {
+    "status": 429,
+    "request_id": null,
+    "error": "{\"error\": {\"message\": \"Budget has been exceeded! Key=coding-workflow (sk-...vWdA) Current cost: 0.0001338, Max budget: 6.69e-05\", \"type\": \"budget_exceeded\", \"param\": null, \"code\": \"429\"}}"
+   },
+   "budget_restored": true
+  },
+  "promptfoo": {
+   "max_budget": 1.0,
+   "spend_before": 0.02487600000000001,
+   "spend_after_allowed_call": 0.0248856,
+   "allowed_call": {
+    "status": 200,
+    "request_id": "0bdd3db0-2ce4-41b5-b3a6-5622b8c2b640",
+    "error": null
+   },
+   "denied_call_with_cap_below_spend": {
+    "status": 429,
+    "request_id": null,
+    "error": "{\"error\": {\"message\": \"Budget has been exceeded! Key=promptfoo (sk-...RuIg) Current cost: 0.024885600000000008, Max budget: 0.0124428\", \"type\": \"budget_exceeded\", \"param\": null, \"code\": \"429\"}}"
+   },
+   "budget_restored": true
+  }
+ },
+ "note": "budget unit = LiteLLM shadow USD (Ollama has no fee)",
+ "concurrency": [
+  {
+   "parallel_requests": 6,
+   "max_budget": 2.5e-05,
+   "allowed": 4,
+   "denied": 2,
+   "final_spend": 3.84e-05,
+   "overshoot": 1.3399999999999997e-05,
+   "overshoot_in_calls": 1.22,
+   "burst_seconds": 3.09,
+   "spend_visible_after_seconds": 14,
+   "follow_up_status": 429
+  },
+  {
+   "parallel_requests": 12,
+   "max_budget": 2.5e-05,
+   "allowed": 4,
+   "denied": 8,
+   "final_spend": 3.84e-05,
+   "overshoot": 1.3399999999999997e-05,
+   "overshoot_in_calls": 1.22,
+   "burst_seconds": 2.82,
+   "spend_visible_after_seconds": 14,
+   "follow_up_status": 429
+  }
+ ]
+}

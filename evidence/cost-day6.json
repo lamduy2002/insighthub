@@ -1,0 +1,320 @@
+{
+ "mode": "real",
+ "observed_at": "2026-09-30T15:56:14Z",
+ "source_sha256": "85586676b10c1ea307d76c51aa5853f182f6e630f3207a920d34f1629da56a17",
+ "currency": "USD",
+ "budget_usd": 1.0,
+ "total_usd": 0,
+ "entries": [
+  {
+   "request_id": "f40b59a0-e432-4a6f-9edc-2da7778d587e",
+   "input_tokens": 1150,
+   "output_tokens": 149,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 57.449,
+    "memory_peak_bytes": 1889927168
+   },
+   "shadow_cost_usd": 0.0002619
+  },
+  {
+   "request_id": "66c867c0-f4b4-49a1-aa48-aa02fdcc8ea3",
+   "input_tokens": 1152,
+   "output_tokens": 14,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 36.15,
+    "memory_peak_bytes": 1886502912
+   },
+   "shadow_cost_usd": 0.0001812
+  },
+  {
+   "request_id": "290331c9-b501-4f52-961b-f4a7fd4eb88b",
+   "input_tokens": 1149,
+   "output_tokens": 40,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 38.231,
+    "memory_peak_bytes": 1882091520
+   },
+   "shadow_cost_usd": 0.00019635
+  },
+  {
+   "request_id": "7e47780f-48ff-4022-a90f-8fb87bded1f5",
+   "input_tokens": 1152,
+   "output_tokens": 256,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 83.779,
+    "memory_peak_bytes": 1885298688
+   },
+   "shadow_cost_usd": 0.0003264
+  },
+  {
+   "request_id": "4fcfa573-756c-4629-beb0-6ebc9aed1819",
+   "input_tokens": 1150,
+   "output_tokens": 256,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 77.245,
+    "memory_peak_bytes": 1875689472
+   },
+   "shadow_cost_usd": 0.0003261
+  },
+  {
+   "request_id": "60fd53d4-7484-4884-802a-0ba8254644d9",
+   "input_tokens": 1148,
+   "output_tokens": 155,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 54.41,
+    "memory_peak_bytes": 1871876096
+   },
+   "shadow_cost_usd": 0.0002652
+  },
+  {
+   "request_id": "d4848990-e47b-44b4-ad7e-3fbc6564d7b8",
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 0.461,
+    "memory_peak_bytes": 1802067968
+   },
+   "shadow_cost_usd": 0.0
+  },
+  {
+   "request_id": "c9aef6cd-0e4c-4145-b3ae-654889a1f7a8",
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 0.58,
+    "memory_peak_bytes": 1802121216
+   },
+   "shadow_cost_usd": 0.0
+  },
+  {
+   "request_id": "e3aee802-3295-4d27-962f-1a46f9ac7860",
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 0.524,
+    "memory_peak_bytes": 1802133504
+   },
+   "shadow_cost_usd": 0.0
+  },
+  {
+   "request_id": "bf6a4ebf-4536-458c-aa3d-4bbd1a200a56",
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 0.496,
+    "memory_peak_bytes": 1802391552
+   },
+   "shadow_cost_usd": 0.0
+  },
+  {
+   "request_id": "9a21a7b3-9c53-47fc-9736-e14e940bd8ab",
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 0.489,
+    "memory_peak_bytes": 1802457088
+   },
+   "shadow_cost_usd": 0.0
+  },
+  {
+   "request_id": "82e3fc4c-6b2d-4ee0-8584-e7fbce0e0380",
+   "input_tokens": 1153,
+   "output_tokens": 99,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 43.25,
+    "memory_peak_bytes": 1872691200
+   },
+   "shadow_cost_usd": 0.00023235
+  },
+  {
+   "request_id": "955d16cc-6571-4dc9-96f6-385555bf01ed",
+   "input_tokens": 1161,
+   "output_tokens": 141,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 49.177,
+    "memory_peak_bytes": 1879777280
+   },
+   "shadow_cost_usd": 0.00025875
+  },
+  {
+   "request_id": "f1459e01-1f06-4c1d-805b-08d9f63fa1bd",
+   "input_tokens": 1157,
+   "output_tokens": 256,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 70.342,
+    "memory_peak_bytes": 1871470592
+   },
+   "shadow_cost_usd": 0.00032715
+  },
+  {
+   "request_id": "a8a6fe50-f740-4264-abe7-e75af679d10c",
+   "input_tokens": 1157,
+   "output_tokens": 33,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 35.069,
+    "memory_peak_bytes": 1878687744
+   },
+   "shadow_cost_usd": 0.00019335
+  },
+  {
+   "request_id": "6abe9993-9557-4e81-a365-443b75f6b0b3",
+   "input_tokens": 1148,
+   "output_tokens": 20,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 30.156,
+    "memory_peak_bytes": 1869881344
+   },
+   "shadow_cost_usd": 0.0001842
+  },
+  {
+   "request_id": "6b3dc1c2-1780-439e-9d70-b8a18447e739",
+   "input_tokens": 1148,
+   "output_tokens": 13,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 31.718,
+    "memory_peak_bytes": 1869156352
+   },
+   "shadow_cost_usd": 0.00018
+  },
+  {
+   "request_id": "485d130c-dfcc-4991-b361-4de50b903493",
+   "input_tokens": 1150,
+   "output_tokens": 17,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 35.251,
+    "memory_peak_bytes": 1879359488
+   },
+   "shadow_cost_usd": 0.0001827
+  },
+  {
+   "request_id": "d33e88d5-0968-4249-80ab-b7df5fb09c7d",
+   "input_tokens": 1153,
+   "output_tokens": 18,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 36.926,
+    "memory_peak_bytes": 1869991936
+   },
+   "shadow_cost_usd": 0.00018375
+  },
+  {
+   "request_id": "40ffc0d0-99bf-491d-9806-af05c35cfa87",
+   "input_tokens": 1149,
+   "output_tokens": 14,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 26.632,
+    "memory_peak_bytes": 1870016512
+   },
+   "shadow_cost_usd": 0.00018075
+  },
+  {
+   "request_id": "33eef1d0-55c3-4e22-ac98-eabccee8355b",
+   "input_tokens": 1145,
+   "output_tokens": 17,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 25.161,
+    "memory_peak_bytes": 1869860864
+   },
+   "shadow_cost_usd": 0.00018195
+  },
+  {
+   "request_id": "4d835a47-2611-4803-b4c7-721eb0926f83",
+   "input_tokens": 1148,
+   "output_tokens": 12,
+   "input_usd_per_million": 0,
+   "output_usd_per_million": 0,
+   "cost_usd": 0,
+   "resource_usage": {
+    "measurement_source": "cgroup v2 memory.current (docker exec) summed over insighthub-day6 ollama+litellm containers sampled ~4Hz during the request; duration = wall time of POST /chat",
+    "duration_seconds": 27.212,
+    "memory_peak_bytes": 1872093184
+   },
+   "shadow_cost_usd": 0.0001794
+  }
+ ],
+ "note": "Ollama local inference: provider fee is 0 USD. shadow_cost_usd is the LiteLLM assumed price (security/litellm/config.yaml), used for budgets/attribution; it is not a bill. The query embedding call of each /chat request is attributed separately (X-LLM-Embedding-Request-Id).",
+ "shadow_total_usd": 0.0038415
+}
