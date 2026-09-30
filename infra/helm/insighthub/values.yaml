@@ -94,6 +94,9 @@ containerSecurityContext:
 
 api:
   replicaCount: 1
+  # Deployment strategy. Empty = Kubernetes default (RollingUpdate, 25% surge). values-local.yaml
+  # overrides it: the single 2-CPU kind node has no CPU left to surge a second api pod.
+  strategy: {}
   service:
     port: 8000
     annotations: {}

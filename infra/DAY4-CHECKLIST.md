@@ -17,7 +17,7 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 |---|---|---|
 | MH1 | ServiceMonitor applied | ✅ 3 ServiceMonitor ns `insighthub-local`: `insighthub-api`, `insighthub-redis`, `insighthub-postgres` (`observability/k8s/`) |
 | MH2 | Prometheus quan sát đủ 5 thành phần | ✅ api (`up`=1), postgres (`pg_up`=1), redis (`redis_up`=1, `redis_key_size{arq:queue}`) trực tiếp; web trực tiếp qua blackbox-exporter (`probe_success{job="insighthub-web-probe"}`=1, `Probe` CRD), worker gián tiếp qua cAdvisor + kube-state-metrics (spec §0.4) |
-| MH3 | Grafana dashboard ≥ 9 panels | ✅ 12 panel, import vào Grafana (uid `insighthub-red`), mọi panel có data qua `/api/ds/query`. File `observability/grafana-dashboards/insighthub-red.json`. Còn thiếu: ảnh chụp màn hình (làm tay) |
+| MH3 | Grafana dashboard ≥ 9 panels | ✅ 12 panel, import vào Grafana (uid `insighthub-red`), mọi panel có data qua `/api/ds/query`. File `observability/grafana-dashboards/insighthub-red.json`. Ảnh chụp Slack/Grafana do người dùng tự chụp, không nằm trong repo |
 | MH4 | Recording rules cho anomaly bands | ✅ `kubectl get prometheusrule -n monitoring insighthub-anomaly`: 17 recording rules (SLI + 3 band × avg/stddev/upper), 20/20 rule health `ok` |
 | MH5 | Alert rules cho 3 anomaly (`promtool check rules`) | ✅ `promtool check rules` SUCCESS (20 rules), `promtool test rules` SUCCESS (5 case, chạy 3 lần đều exit 0). Chưa fire thật (chờ incident) |
 | MH6 | Alertmanager → Slack | ✅ FIRING + RESOLVED của test alert tới `#alerts` (người dùng đã chụp ảnh), và cả 3 alert incident đều được Alertmanager gửi Slack (`alertmanager_notifications_total{integration="slack"}` = 8 sau incident 3 gồm cả thông báo resolved, `alertmanager_notifications_failed_total` = 0). Ảnh chụp: làm tay |
@@ -25,8 +25,8 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 | MH8 | Incident #2 queue backlog + RCA | ✅ `InsightHubQueueDepthAnomaly` FIRING 19:46:51Z (23 > band 5), resolved ≤19:56:36Z. `evidence/incident-2.json`: **đúng** (không xác định được ai scale worker, tự ghi `unverified`) |
 | MH9 | Incident #3 error burst + RCA | ✅ `InsightHubErrorRateAnomaly` FIRING 20:10:21Z (0.434 > band 0.05), resolved 20:16:23Z. `evidence/incident-3.json`: **đúng nguyên nhân gốc, sai nhẹ cơ chế** ("pod bị xoá" thay vì StatefulSet scale 0) |
 | MH10 | RCA cite metric + timestamp | ✅ 43 sample (17+12+14) lấy nguyên từ `harvest-samples.py`, kiểm bằng logic `verify.py:602-633`: 43/43 khớp `query_range`; mỗi hypothesis có dạng `metric{labels} = giá trị @ timestamp` |
-| MH11 | Quiz 5 câu ≥ 4/5 | ❌ **CẦN USER** |
-| MH12 | MLOps overview notes 4 block | 🔸 nháp `observability/mlops-overview-notes.md` (người học phải đọc và viết lại bằng lời mình; spec không định nghĩa "4 block", cách chia ghi ở đầu file) |
+| MH11 | Quiz 5 câu ≥ 4/5 | ⚪ **không nộp** (quyết định của người dùng; bài nộp ghi rõ, không tự tính là đạt) |
+| MH12 | MLOps overview notes 4 block | ✅ `observability/mlops-overview-notes.md` do người dùng đọc, duyệt và cung cấp nội dung cuối (bản nháp ban đầu của agent đã bị thay toàn bộ). 4 block: vòng đời ML, 4 khái niệm (Registry/Approval Gate/Drift/Rollback), artifact app khác model, ranh giới ML Engineer/DevOps. Spec không định nghĩa "4 block" nên cách chia này là cách diễn giải |
 
 ## B. Non-functional (§8.3, dòng 977-982)
 
@@ -50,8 +50,8 @@ Spec §0, §2.3, §2.5, §4, §8 · `docs/Guide_Local_AWS_Cost_DO2603.md` · `do
 | 6 | Test alert → Slack `#alerts` | ✅ FIRING + RESOLVED tới Slack |
 | 7 | `./scripts/chaos/inject-llm-latency.sh` → alert fires in 5min | ✅ chạy thật: inject 19:20:29Z → FIRING 19:23:51Z (**3 phút 22 giây**) |
 | 8-10 | `incident-1/2/3.json` có evidence + timestamp | ✅ `evidence/incident-{1,2,3}.json` (không nằm trong `rca-reports/` như spec ghi) |
-| 11 | `mlops-overview-notes.md` 4 block | ❌ |
-| 12 | Quiz 5/5 | ❌ cần user |
+| 11 | `mlops-overview-notes.md` 4 block | ✅ (`observability/mlops-overview-notes.md`) |
+| 12 | Quiz: 5/5 | ⚪ không nộp (xem MH11) |
 
 ## D. Verifier Day 4 — sự thật từ code
 
@@ -137,5 +137,22 @@ promtool 5' · exporter+SM 30' · chaos scripts 40' · rules+unit tests 60' · d
 
 - Quy trình mỗi incident: inject → alert firing (đã báo người dùng chụp Slack + Grafana) → tự revert → resolved → RCA bằng subagent mới không biết lỗi (chỉ đọc prompt + MCP + harvest script) → tôi đối chiếu rồi mới thêm `injected_fault`/`injected_fault_evaluation`; `hypotheses`, `ruled_out`, `samples` không bị sửa. Nghỉ ≥10' giữa các incident.
 - **Đã sửa giữa chừng**: (1) `rca-prompt.md` quy tắc 5 mâu thuẫn với verifier (baseline phải nằm trong cửa sổ vì `samples` bắt buộc nằm trong `[started_at, ended_at]`); (2) guard baseline trong `lib.sh` lấy nhầm series đầu tiên sau khi pod api đổi (chặn incident 2 lần đầu) — giờ cộng mọi series.
-- **Drift so với chart (không nằm trong git)**: Deployment `insighthub-api` đặt `maxSurge: 0, maxUnavailable: 1` bằng `kubectl patch` vì node 2 CPU đã 99% CPU requests nên pod api thứ hai không schedule được khi rollout. Hệ quả: mỗi rollout/rollback api làm api mất ~30 giây (available replicas = 0), có trong dữ liệu RCA #1. Helm upgrade tiếp theo của chart `insighthub` sẽ ghi đè patch này.
+- **Drift so với chart — đã xử lý ở mức code**: Deployment `insighthub-api` đang chạy với `maxSurge: 0, maxUnavailable: 1` do `kubectl patch` (node 2 CPU đã 99% CPU requests nên pod api thứ hai không schedule được khi rollout). Giờ chart có biến `api.strategy` (mặc định rỗng; `values-dev.yaml` không đổi — render dev giống hệt byte-by-byte) và `values-local.yaml` đặt đúng giá trị đó, nên `helm upgrade` sau này KHÔNG còn ghi đè. Chưa chạy `helm upgrade` (theo yêu cầu): live vẫn là bản patch tay, giống hệt về nội dung. Hệ quả vận hành: mỗi rollout api mất pod ~30 giây (available replicas = 0), có trong dữ liệu RCA #1.
 - **Hạn "tươi" của RCA**: `verify.py:605-606` yêu cầu `started_at`/`ended_at` ≤24h. Incident 1 bắt đầu cửa sổ 2026-09-29T19:05:29Z nên **hết tươi lúc 2026-09-30T19:05Z (02:05 ngày 01/10 giờ máy)**. Chạy lại verify sau mốc đó sẽ INCOMPLETE dù mọi thứ vẫn đúng; output verify đã lưu trong `evidence/` là bằng chứng.
+
+## L. Chỗ lệch so với spec (ghi để trainer và người đọc khỏi hiểu nhầm)
+
+| Spec ghi | Thực tế | Lý do |
+|---|---|---|
+| `kubectl get servicemonitor -n insighthub` (§8.5) | namespace **`insighthub-local`** (kind local) | Day 4 chạy local theo Guide local/AWS (§0.2); EKS `insighthub-dev` đã xoá sau Day 3, không giữ cloud cả tuần |
+| `cat rca-reports/incident-{1,2,3}.json` | **`evidence/incident-{1,2,3}.json`** | `evidence/` nằm ngoài fingerprint nguồn (`verify.py:32-34`) nên sinh RCA không làm lệch `source_sha256`; role trong `day4.json` là `rca`, `rca_2`, `rca_3` |
+| Prometheus quan sát đủ 5 thành phần bằng ServiceMonitor | api, postgres, redis, web có tín hiệu trực tiếp (ServiceMonitor/Probe); **ingestion-worker quan sát gián tiếp**: cAdvisor + kube-state-metrics (pod, CPU, memory, replica, restart) + `redis_key_size{key="arq:queue"}` | Không sửa code worker (code Day 1). Spec §0.4: "5 thành phần không đồng nghĩa 5 pods hoặc 5 endpoint Prometheus". Hệ quả: không có metric nội bộ của worker (số job, thời gian xử lý) |
+| Panel token và cost | **ước lượng, fixture mode**: `insighthub_embedding_estimated_tokens_total` × đơn giá cố định 0.02 USD/1M token | `RAG_MODE=fixture` nên `insighthub_llm_tokens_total` luôn = 0; không tạo series giả (§0.4). Ghi rõ trong tiêu đề panel và description dashboard |
+| Incident #1 "LLM latency spike" | **độ trễ được tiêm** (sitecustomize trong ConfigMap, `sleep 4s` trong `generate()`), không phải provider chậm thật | Fixture ép cả 2 provider; đổi embedding cần reindex (§0.4). RCA ghi đúng điều này ở `injected_fault` |
+| Grafana dashboard URL | dashboard chạy **local** (`http://localhost:3001/d/insighthub-red`, không truy cập được từ ngoài); bằng chứng nộp là JSON trong repo + ảnh chụp | Grafana Cloud không dùng; kind local |
+| Alertmanager → Slack `#alerts` | có, nhưng webhook nằm trong Secret `monitoring/alertmanager-slack`, không trong git | Không commit secret |
+| Quiz MH11 | không nộp | Quyết định của người dùng |
+| `scripts/chaos/inject-llm-latency.sh` "alert fires in 5min" | firing sau **3'22"** | `for: 2m` + cửa sổ rate 5m |
+
+## M. Trạng thái cuối
+MH1-MH10 ✅, MH11 ⚪ không nộp, MH12 ✅. `scripts/verify-day-4.sh --prometheus-url http://localhost:9090` PASS (3 incident, 43 sample). Verifier chỉ kiểm phần trích dẫn số liệu; `milestone_complete` luôn `false` và phần Slack/panel/MLOps/quiz vẫn do người chấm đánh giá. Phải chạy verify khi Prometheus còn sống và RCA còn tươi (incident 1 hết tươi lúc 2026-09-30T19:05Z = 02:05 ngày 01/10 giờ máy).
