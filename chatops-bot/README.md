@@ -4,6 +4,7 @@ Luồng: Slack `app_mention` → `POST /slack/events` (verify chữ ký trên ra
 
 - 3 intent read: health, ingest count, pods lỗi. Dữ liệu qua **MCP thật** (Prometheus `prometheus-mcp`, Kubernetes `kubernetes-mcp-server --read-only`, cấu hình như `.mcp.json`).
 - Permission 3 tầng (`app/permissions.py`): read tự động; write (`scale <api|worker> to N`, N 1-5) cần `confirm <token>` trong 60s, token một lần và gắn (user, action, args); destructive luôn bị từ chối. Thực thi scale bằng identity riêng `chatops-mutator` (`infra/k8s/chatops-rbac.yaml`), `--dry-run=server`.
+- Queue SQLite nằm ở `~/.local/state/insighthub-chatops/queue.db` (ngoài repo; đổi bằng `CHATOPS_QUEUE_DB`).
 - Audit JSONL: `chatops-bot/chatops-audit.log` (`timestamp`, `event_id`, `action`, `decision`, `user`, ...). Không ghi secret/token.
 - Catalog intent: `prompts/intents.md`.
 

@@ -13,6 +13,7 @@ DEPLOYMENT_ALIASES = {
     "web": "insighthub-web",
 }
 
+_SLACK_FORMATTING = re.compile(r"[`*_~]")  # code, bold, italic, strike marks Slack keeps when text is copied
 _MENTION = re.compile(r"<@[A-Z0-9]+(?:\|[^>]*)?>")
 _CONFIRM = re.compile(r"^(?:confirm|xac nhan)\s+([a-z0-9_-]{6,32})$")
 _SCALE = re.compile(r"\bscale\s+([a-z0-9-]+)\s+(?:to|len)\s+(-?\d+)\b")
@@ -26,7 +27,7 @@ class Intent:
 
 
 def normalize(text: str) -> str:
-    text = _MENTION.sub(" ", text).replace("đ", "d").replace("Đ", "D")
+    text = _SLACK_FORMATTING.sub("", _MENTION.sub(" ", text)).replace("đ", "d").replace("Đ", "D")
     folded = unicodedata.normalize("NFD", text)
     folded = "".join(c for c in folded if unicodedata.category(c) != "Mn")
     return re.sub(r"\s+", " ", folded.lower()).strip(" ?!.\n\t")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .audit import AuditLog
@@ -20,6 +21,14 @@ HEALTH_QUERIES = {
     "redis": "min(redis_up)",
     "web": 'min(probe_success{job="insighthub-web-probe"})',
 }
+
+
+LOCAL_TZ = timezone(timedelta(hours=7))  # "hôm nay" = từ 00:00 giờ máy (+07)
+
+
+def seconds_since_local_midnight(now: datetime | None = None) -> int:
+    local = (now or datetime.now(LOCAL_TZ)).astimezone(LOCAL_TZ)
+    return int((local - local.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds())
 
 
 class Handler:
@@ -69,8 +78,16 @@ class Handler:
         counts = {r["metric"].get("status", "?"): int(r["value"]) for r in rows}
         total = sum(counts.values())
         detail = ", ".join(f"{k}: {v}" for k, v in sorted(counts.items()))
-        await self._reply(payload, f"Tổng tài liệu hiện có: *{total}* ({detail}). "
-                                   "Nguồn: gauge `insighthub_documents_total`, không phải số tăng trong ngày.")
+        ready = counts.get("ready", 0)
+        offset = seconds_since_local_midnight()
+        base = await self._prom(user, f'sum(insighthub_documents_total{{status="ready"}} offset {offset}s)', event_id)
+        if base:
+            before = int(base[0]["value"])
+            head = f"Hôm nay (từ 00:00 +07) ready tăng *{ready - before:+d}* doc ({before} → {ready})."
+        else:
+            head = "Chưa có dữ liệu lúc 00:00 để tính số tăng trong ngày."
+        await self._reply(payload, f"{head} Tổng hiện có: *{total}* ({detail}). "
+                                   "Số tăng là chênh lệch ròng của gauge `insighthub_documents_total`.")
 
     async def _on_pods(self, event_id: str, payload: dict[str, Any], user: str, intent: Intent) -> None:
         verdict = authorize(self.settings, user, Tier.READ)
@@ -83,7 +100,7 @@ class Handler:
         if not bad:
             await self._reply(payload, f"Không có pod lỗi trong `{self.settings.namespace}` ({len(pods)} pod).")
             return
-        rows = [f"• `{p.name}`: {p.phase}{' / ' + p.reason if p.reason else ''}, restarts={p.restarts}" for p in bad]
+        rows = [f"• `{p.name}`: {p.phase}{' / ' + p.reason if p.reason and p.reason != p.phase else ''}, restarts={p.restarts}" for p in bad]
         await self._reply(payload, f"*{len(bad)}/{len(pods)}* pod đang lỗi:\n" + "\n".join(rows))
 
     async def _on_destructive(self, event_id: str, payload: dict[str, Any], user: str, intent: Intent) -> None:

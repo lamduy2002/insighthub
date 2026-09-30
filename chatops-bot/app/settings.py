@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 BOT_DIR = Path(__file__).resolve().parent.parent
+# Runtime state lives outside the repository so the SQLite/WAL files never enter source digests.
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "insighthub-chatops"
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -28,7 +30,7 @@ class Settings:
     bot_user_id: str = ""
     approvers: frozenset[str] = frozenset()
     audit_log_path: Path = BOT_DIR / "chatops-audit.log"
-    queue_db_path: Path = BOT_DIR / "queue.db"
+    queue_db_path: Path = STATE_DIR / "queue.db"
     namespace: str = "insighthub-local"
     readonly_kubeconfig: str = str(Path.home() / ".kube" / "insighthub-mcp-readonly.kubeconfig")
     mutator_kubeconfig: str = str(Path.home() / ".kube" / "insighthub-chatops-mutator.kubeconfig")
@@ -55,7 +57,7 @@ class Settings:
             bot_user_id=env.get("SLACK_BOT_USER_ID", ""),
             approvers=frozenset(x.strip() for x in env.get("CHATOPS_APPROVERS", "").split(",") if x.strip()),
             audit_log_path=Path(env.get("CHATOPS_AUDIT_LOG", str(BOT_DIR / "chatops-audit.log"))),
-            queue_db_path=Path(env.get("CHATOPS_QUEUE_DB", str(BOT_DIR / "queue.db"))),
+            queue_db_path=Path(env.get("CHATOPS_QUEUE_DB", str(STATE_DIR / "queue.db"))),
             namespace=env.get("CHATOPS_NAMESPACE", "insighthub-local"),
             readonly_kubeconfig=env.get("CHATOPS_READONLY_KUBECONFIG",
                                         str(home / ".kube" / "insighthub-mcp-readonly.kubeconfig")),

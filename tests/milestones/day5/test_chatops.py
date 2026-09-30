@@ -49,6 +49,8 @@ class FakeInfra:
         if self.delay:
             await asyncio.sleep(self.delay)
         self.queries.append(expr)
+        if "offset" in expr:
+            return [{"metric": {}, "value": 5}]
         if "documents_total" in expr:
             return [{"metric": {"status": "ready"}, "value": 7}, {"metric": {"status": "failed"}, "value": 1}]
         return [{"metric": {}, "value": 1}]
@@ -285,14 +287,52 @@ def test_intent_parsing(text, kind):
     assert parse(text).kind == kind
 
 
+@pytest.mark.parametrize("text", [
+    "`confirm ABC12345`", "*confirm ABC12345*", "_confirm ABC12345_", "~confirm ABC12345~",
+    "```confirm ABC12345```", "confirm `ABC12345`", "<@UBOT> `confirm abc12345`", "  `Confirm ABC12345`.  ",
+])
+def test_slack_formatting_is_stripped(text):
+    intent = parse(text)
+    assert intent.kind == "confirm" and intent.args == {"token": "ABC12345"}
+    assert parse("`scale api to 5`").kind == "scale"
+    assert parse("*Pod nào đang lỗi?*").kind == "pods"
+
+
+def test_confirm_with_backticks_executes(tmp_path):
+    bot = Bot(tmp_path)
+    token = bot.ask("Ev60", APPROVER, "scale api to 5").split("confirm ")[1].split("`")[0]
+    assert "dry-run" in bot.ask("Ev61", APPROVER, f"`confirm {token}`")  # text as copied from the bot's message
+    assert bot.infra.scales == [("insighthub-local", "insighthub-api", 5, True)]
+
+
 def test_three_intents_use_mcp_and_are_audited(tmp_path):
     bot = Bot(tmp_path)
     assert "healthy" in bot.ask("Ev40", OTHER, "InsightHub có healthy không?")
-    assert "*8*" in bot.ask("Ev41", OTHER, "Hôm nay ingest bao nhiêu doc?")
+    reply = bot.ask("Ev41", OTHER, "Hôm nay ingest bao nhiêu doc?")
+    assert "+2" in reply and "5 → 7" in reply and "*8*" in reply  # ready 7 now vs 5 at 00:00; total 8
+    assert any("offset" in q and "ready" in q for q in bot.infra.queries)
     pods = bot.ask("Ev42", OTHER, "Pod nào đang lỗi?")
     assert "bad-1" in pods and "api-1" not in pods
     actions = {e["action"] for e in bot.audit.read()}
     assert {"mcp:prometheus.query", "mcp:kubernetes.pods_list"} <= actions
+
+
+def test_ingest_without_midnight_baseline(tmp_path):
+    class NoBaseline(FakeInfra):
+        async def prom_query(self, expr):
+            return [] if "offset" in expr else await super().prom_query(expr)
+    reply = Bot(tmp_path, NoBaseline()).ask("Ev45", OTHER, "ingest count today?")
+    assert "Chưa có dữ liệu lúc 00:00" in reply and "*8*" in reply
+
+
+def test_seconds_since_local_midnight():
+    from datetime import datetime, timedelta, timezone
+    from app.service import seconds_since_local_midnight
+    tz7 = timezone(timedelta(hours=7))
+    assert seconds_since_local_midnight(datetime(2026, 9, 30, 0, 0, 0, tzinfo=tz7)) == 0
+    assert seconds_since_local_midnight(datetime(2026, 9, 30, 14, 30, 5, tzinfo=tz7)) == 14 * 3600 + 30 * 60 + 5
+    # 17:00 UTC is 00:00 the next day in +07
+    assert seconds_since_local_midnight(datetime(2026, 9, 29, 17, 0, 1, tzinfo=timezone.utc)) == 1
 
 
 def test_audit_schema_and_no_secrets(tmp_path):
