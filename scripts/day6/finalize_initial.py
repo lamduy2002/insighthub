@@ -11,7 +11,8 @@ import harness  # noqa: E402
 
 raw = json.loads((ROOT / "evidence" / "eval-initial.raw.json").read_text())
 raw_cost = json.loads((ROOT / "evidence" / "cost-initial.raw.json").read_text())
-scan_digest = raw["source_sha256"]
+# Digest of the tree when the pre-fix stack was scanned (recorded before any fix was deployed).
+scan_digest = (ROOT / "evidence" / "day6-initial-scan-source-sha256.txt").read_text().strip()
 report = dict(raw, source_sha256=harness.source_digest(), scan_source_sha256=scan_digest,
               dataset_sha256=harness.sha256_file(ROOT / "security" / "dataset.json"),
               note="Initial scan ran on the pre-fix code (digest scan_source_sha256). source_sha256 is the frozen final "
