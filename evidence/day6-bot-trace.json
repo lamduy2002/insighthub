@@ -1,0 +1,43 @@
+{
+ "infra": "static",
+ "audit_events": [
+  {
+   "timestamp": "2026-09-30T12:12:40.971259+00:00",
+   "event_id": "fe6c1e5bc015493faebcf7283cb7ad14",
+   "action": "intent.summarize",
+   "decision": "allowed",
+   "user": "UEXAMPLE",
+   "slack_event_id": "EvTraffic0"
+  },
+  {
+   "timestamp": "2026-09-30T12:12:59.539483+00:00",
+   "event_id": "6a838563991643b0af6280bb8d28a35f",
+   "action": "llm.summarize",
+   "decision": "allowed",
+   "user": "UEXAMPLE",
+   "result": "request_id=c8f6104f-c2fa-4e69-83fc-92620826e381 in=118 out=70",
+   "slack_event_id": "EvTraffic0"
+  },
+  {
+   "timestamp": "2026-09-30T12:12:59.561457+00:00",
+   "event_id": "eb905397fa7f474e8d0d3009339e14ad",
+   "action": "intent.summarize",
+   "decision": "allowed",
+   "user": "UEXAMPLE",
+   "slack_event_id": "EvTraffic1"
+  },
+  {
+   "timestamp": "2026-09-30T12:13:06.251636+00:00",
+   "event_id": "b27a4bf6fe144e78bcda18c705e41bab",
+   "action": "llm.summarize",
+   "decision": "allowed",
+   "user": "UEXAMPLE",
+   "result": "request_id=e3a3880f-7f83-452e-891e-83de6281c994 in=118 out=70",
+   "slack_event_id": "EvTraffic1"
+  }
+ ],
+ "replies": [
+  "Dữ liệu vận hành cho kênh ChatOps:\n\n- **API**: Đúng (up)\n- **Postgres**: Đúng (up)\n- **Redis**: Đúng (up)\n- **Web**: Đúng (up)\n- **Pods lỗi**: 0/2\n\nDữ liệu vận hành tốt, không có lỗi.\n_(AI tóm tắt từ số liệu Prometheus/Kubernetes; chỉ đọc, không thay đổi hạ tầng.)_",
+  "Dữ liệu vận hành cho kênh ChatOps:\n\n- **API**: Đúng (up)\n- **Postgres**: Đúng (up)\n- **Redis**: Đúng (up)\n- **Web**: Đúng (up)\n- **Pods lỗi**: 0/2\n\nDữ liệu vận hành tốt, không có lỗi.\n_(AI tóm tắt từ số liệu Prometheus/Kubernetes; chỉ đọc, không thay đổi hạ tầng.)_"
+ ]
+}

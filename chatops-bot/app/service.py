@@ -8,6 +8,7 @@ from typing import Any
 from .audit import AuditLog
 from .infra import Infra, Notifier, PodInfo
 from .intents import Intent, parse
+from .llm import LLMError, Summarizer
 from .permissions import ApprovalError, ApprovalStore, Tier, authorize
 from .settings import Settings
 from .store import JobStore
@@ -33,9 +34,9 @@ def seconds_since_local_midnight(now: datetime | None = None) -> int:
 
 class Handler:
     def __init__(self, settings: Settings, audit: AuditLog, infra: Infra, notifier: Notifier,
-                 approvals: ApprovalStore) -> None:
+                 approvals: ApprovalStore, llm: Summarizer | None = None) -> None:
         self.settings, self.audit, self.infra = settings, audit, infra
-        self.notifier, self.approvals = notifier, approvals
+        self.notifier, self.approvals, self.llm = notifier, approvals, llm
 
     async def _reply(self, payload: dict[str, Any], text: str) -> None:
         await self.notifier.post(payload["channel"], text, payload.get("thread_ts") or payload.get("ts"))
@@ -102,6 +103,38 @@ class Handler:
             return
         rows = [f"• `{p.name}`: {p.phase}{' / ' + p.reason if p.reason and p.reason != p.phase else ''}, restarts={p.restarts}" for p in bad]
         await self._reply(payload, f"*{len(bad)}/{len(pods)}* pod đang lỗi:\n" + "\n".join(rows))
+
+    async def _on_summarize(self, event_id: str, payload: dict[str, Any], user: str, intent: Intent) -> None:
+        verdict = authorize(self.settings, user, Tier.READ)
+        self.audit.record(action="intent.summarize", decision=verdict.decision, user=user, slack_event_id=event_id)
+        lines = []
+        for name, expr in HEALTH_QUERIES.items():
+            rows = await self._prom(user, expr, event_id)
+            value = rows[0]["value"] if rows else None
+            lines.append(f"{name}: {'up' if value == 1 else 'down' if value == 0 else 'không có dữ liệu'}")
+        pods = await self.infra.list_pods(self.settings.namespace)
+        self.audit.record(action="mcp:kubernetes.pods_list", decision="allowed", user=user,
+                          args={"namespace": self.settings.namespace}, result=f"{len(pods)} pods",
+                          slack_event_id=event_id)
+        bad = [f"{p.name}: {p.phase}{' / ' + p.reason if p.reason else ''}, restarts={p.restarts}"
+               for p in pods if _pod_failing(p)]
+        facts = "\n".join(lines + [f"pods lỗi: {len(bad)}/{len(pods)}"] + bad)
+        if self.llm is None:
+            await self._reply(payload, "Tóm tắt bằng AI chưa được cấu hình. Số liệu:\n" + facts)
+            return
+        try:
+            summary = await self.llm.summarize(facts)
+        except LLMError as exc:
+            # Keep only the error class; fall back to the plain facts (never to a different provider).
+            self.audit.record(action="llm.summarize", decision="allowed", user=user,
+                              result=f"fallback_no_llm: {exc}", slack_event_id=event_id)
+            await self._reply(payload, "Không gọi được mô hình AI, đây là số liệu thô:\n" + facts)
+            return
+        self.audit.record(action="llm.summarize", decision="allowed", user=user,
+                          result=f"request_id={summary.request_id} in={summary.input_tokens} out={summary.output_tokens}",
+                          slack_event_id=event_id)
+        await self._reply(payload, f"{summary.text}\n_(AI tóm tắt từ số liệu Prometheus/Kubernetes; "
+                                   f"chỉ đọc, không thay đổi hạ tầng.)_")
 
     async def _on_destructive(self, event_id: str, payload: dict[str, Any], user: str, intent: Intent) -> None:
         verdict = authorize(self.settings, user, Tier.DESTRUCTIVE)

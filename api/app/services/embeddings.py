@@ -92,7 +92,10 @@ def _real_embed(texts, input_type, settings):
     if provider == "openai":
         data = post_json(
             settings.openai_base_url.rstrip("/") + "/embeddings",
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            headers={
+                "Authorization": f"Bearer {settings.openai_api_key}",
+                "x-litellm-tags": f"app:insighthub,purpose:embedding-{input_type}",
+            },
             payload={
                 "model": model,
                 "input": texts,

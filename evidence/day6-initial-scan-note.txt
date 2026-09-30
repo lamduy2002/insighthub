@@ -1,0 +1,1 @@
+Initial scan target = containers built from commit e99d606 (api/worker), LiteLLM without guardrails, Ollama qwen2.5:0.5b; grader qwen2.5:1.5b (chat-grader).

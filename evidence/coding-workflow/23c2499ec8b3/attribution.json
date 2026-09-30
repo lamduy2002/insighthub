@@ -1,0 +1,18 @@
+{
+ "run_id": "23c2499ec8b3",
+ "at": "2026-09-30T12:13:33Z",
+ "key_alias": "coding-workflow",
+ "request_id": "3f047f1e-9a5e-4b25-ad42-5b78d7868821",
+ "model": "chat-small",
+ "file": "chatops-bot/app/intents.py",
+ "function": "normalize",
+ "accepted": true,
+ "reason": "docstring-only change",
+ "diff_sha256": "4c56ea80c3722d308e74271c8830a704a78054904b269456b9c9bdb2181fdbe9",
+ "tests_exit_code": 0,
+ "input_tokens": 200,
+ "output_tokens": 157,
+ "shadow_cost_usd": 0.0001242,
+ "applied": false,
+ "tests_output_tail": "                   [100%]\n=============================== warnings summary ===============================\n../../home/lamdii2002/insighthub/venv/lib/python3.11/site-packages/starlette/testclient.py:53\n  /home/lamdii2002/insighthub/venv/lib/python3.11/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.\n    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n36 passed, 1 warning in 1.77s\n"
+}

@@ -3,11 +3,14 @@
 import time
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.errors import ServiceError
 from app.core.metrics import llm_call_latency, llm_tokens_total, rag_query_latency
+from app.core.providers import llm_calls
 from app.services.llm import generate
+from app.services.sanitize import drop_suspicious_contexts
 from app.services.retrieval import retrieve
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -36,17 +39,37 @@ class ChatResponse(BaseModel):
     usage: TokenUsage
 
 
+def _attribution_headers(calls: list) -> dict:
+    """Gateway call ids for cost attribution; absent when no gateway call happened."""
+    headers = {}
+    for path, call_id in calls:
+        if not call_id:
+            continue
+        if path.endswith("/chat/completions"):
+            headers["X-LLM-Request-Id"] = call_id
+        elif path.endswith("/embeddings"):
+            headers["X-LLM-Embedding-Request-Id"] = call_id
+    return headers
+
+
 @router.post("", response_model=ChatResponse)
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, response: Response):
     start = time.perf_counter()
-    with rag_query_latency.time():
-        contexts = retrieve(req.question, top_k=req.top_k)
-        if not contexts:
-            raise HTTPException(
-                404, "Chưa có tài liệu nào sẵn sàng. Hãy upload tài liệu trước."
-            )
-        with llm_call_latency.time():
-            result = generate(req.question, contexts)
+    calls: list = []
+    llm_calls.set(calls)
+    try:
+        with rag_query_latency.time():
+            contexts, _ = drop_suspicious_contexts(retrieve(req.question, top_k=req.top_k))
+            if not contexts:
+                raise HTTPException(
+                    404, "Chưa có tài liệu nào sẵn sàng. Hãy upload tài liệu trước."
+                )
+            with llm_call_latency.time():
+                result = generate(req.question, contexts)
+    except ServiceError as exc:
+        exc.headers = _attribution_headers(calls)
+        raise
+    response.headers.update(_attribution_headers(calls))
     for direction in ("input", "output"):
         value = result["usage"].get(f"{direction}_tokens")
         if value is not None:

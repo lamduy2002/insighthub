@@ -1,0 +1,62 @@
+"""Static guarantees of the gateway/compose configuration (no network)."""
+import os
+import re
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(os.environ.get("INSIGHTHUB_REPO_ROOT") or Path(__file__).resolve().parents[3])
+CONFIG = yaml.safe_load((ROOT / "security" / "litellm" / "config.yaml").read_text())
+
+
+def test_guardrails_wrap_input_and_output_and_every_workload_requests_them():
+    guards = {g["guardrail_name"]: g["litellm_params"] for g in CONFIG["guardrails"]}
+    assert guards["injection-input"]["mode"] == "pre_call"
+    assert guards["output-check"]["mode"] == "post_call"
+    categories = {c["category"] for c in guards["injection-input"]["categories"]}
+    assert {"prompt_injection_jailbreak", "prompt_injection_system_prompt"} <= categories
+    assert any("bỏ qua mọi hướng dẫn" in w["keyword"] for w in guards["injection-input"]["blocked_words"])
+
+
+def test_gateway_models_are_priced_and_named_honestly():
+    models = {m["model_name"]: m["litellm_params"] for m in CONFIG["model_list"]}
+    assert {"chat-small", "embed-mxbai"} <= set(models)
+    assert all(p["model"].startswith("ollama") and p["input_cost_per_token"] > 0 for p in models.values())
+    names = " ".join(models) + " " + " ".join(p["model"] for p in models.values())
+    assert not re.search(r"(?i)hash|extractive|fallback|fixture|mock|dummy|fake", names)
+
+
+def test_no_secret_is_hardcoded_and_app_only_talks_to_the_gateway():
+    text = (ROOT / "security" / "litellm" / "config.yaml").read_text() + (ROOT / "docker-compose.day6.yml").read_text()
+    assert not re.search(r"sk-[A-Za-z0-9_-]{12,}", text)
+    assert CONFIG["general_settings"]["master_key"] == "os.environ/LITELLM_MASTER_KEY"
+    example = (ROOT / ".env.example").read_text()
+    assert "LITELLM_MASTER_KEY=" in example and not re.search(r"LITELLM_MASTER_KEY=\S", example)
+
+
+def test_our_own_prompts_do_not_trip_our_own_guardrail():
+    """Layers must not block each other: the app prompt text may not contain a blocked keyword."""
+    import ast
+
+    tree = ast.parse((ROOT / "api" / "app" / "services" / "llm.py").read_text())
+    constants = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in {"SYSTEM_PROMPT", "REMINDER"}:
+            constants[node.targets[0].id] = ast.literal_eval(node.value)
+    assert set(constants) == {"SYSTEM_PROMPT", "REMINDER"}
+    text = " ".join(constants.values()).lower()
+    guards = {g["guardrail_name"]: g["litellm_params"] for g in CONFIG["guardrails"]}
+    for word in guards["injection-input"]["blocked_words"]:
+        assert word["keyword"].lower() not in text, word["keyword"]
+    for pattern in guards["injection-input"]["patterns"]:
+        if pattern["pattern_type"] == "regex":
+            assert not re.search(pattern["pattern"], text), pattern["name"]
+
+
+def test_guardrails_are_default_on_for_every_key():
+    """default_on true: clients cannot opt out; nobody is exempt (the grader bypasses the gateway instead)."""
+    for guard in CONFIG["guardrails"]:
+        assert guard["litellm_params"]["default_on"] is True, guard["guardrail_name"]
+    assert "chat-grader" not in {m["model_name"] for m in CONFIG["model_list"]}
+    for path in ("api/app/services/llm.py", "chatops-bot/app/llm.py", "tools/coding-workflow/run.py"):
+        assert '"guardrails"' not in (ROOT / path).read_text(), path  # enforcement must not depend on the client

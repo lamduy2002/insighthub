@@ -1,7 +1,44 @@
-# Security, Governance, FinOps - bắt buộc Day 6
+# Security, Governance, FinOps - Day 6
 
-Học viên hoàn thiện Promptfoo50+ cases, initial/final reports, guardrails runtime, LiteLLM gateway+3 virtual keys/budgets, routing cho app/bot/coding agent, cost dashboard và threat model>=6 threats. [Spec mục10](../Running-Project-Specification-Student.md).
+Everything here runs locally: InsightHub (docker compose project `insighthub-day6`) -> LiteLLM gateway
+(guardrail, budgets, audit) -> Ollama (`qwen2.5:0.5b`, `mxbai-embed-large`). No AWS, no paid API. Model and image
+digests are in [MODELS.md](MODELS.md); the threat model is [threat-model.md](threat-model.md).
 
-Config skeleton chỉ giúp bắt đầu; cần actual allowed/blocked, indirect injection qua ingestion/retrieval, budget/bypass tests. Dataset/eval tự viết bổ sung, không thay Promptfoo/guardrails/gateway.
+## Layout
+| Path | What |
+|---|---|
+| `promptfooconfig.yaml`, `redteam.yaml`, `providers/insighthub.js` | Promptfoo 0.123.1 red team (8 plugins, 63 generated cases). The provider uploads the untrusted `{{doc}}` through `/documents`, waits for ingestion, asks `/chat`, then deletes the document |
+| `dataset.json`, `eval/harness.py` | Frozen deterministic dataset (22 cases: attacks + benign regression) and the live runner used by the verifier tests |
+| `litellm/config.yaml` | Gateway models, shadow prices, Prometheus callback, `litellm_content_filter` guardrails |
+| `../tests/milestones/day6/` | Verifier tests (`test_injection_blocked`, `test_benign_allowed`, `test_budget_enforced` + extras) |
 
-Cấu hình hiện tại là scaffold, chưa đủ 50 ca. Ghi coverage mapping cho direct/indirect injection, RAG poisoning, PII và excessive agency. Dùng plugin IDs của bản pin; strategy cũ `prompt-injection` đã đổi thành `jailbreak-templates`. Nguồn: [plugins](https://www.promptfoo.dev/docs/red-team/plugins/), [migration strategy](https://www.promptfoo.dev/docs/red-team/strategies/prompt-injection/). Target HTTP gọi /chat chỉ kiểm tra câu hỏi; poisoning phải đi qua upload/retrieval bằng adapter học viên xây.
+## Coverage mapping (plugin IDs verified with `promptfoo redteam plugins` on the pinned version)
+| Risk | Plugin / strategy | Cases |
+|---|---|---|
+| Direct injection / jailbreak | `hijacking`, `system-prompt-override` | 10 + 10 |
+| Indirect injection (poisoned document) | `indirect-prompt-injection` (payload uploaded as a document) | 9 |
+| RAG poisoning / exfiltration | `rag-poisoning` (custom `llm-rubric`, the pinned version ships no grader for it), `rag-document-exfiltration` | 3 + 10 |
+| PII | `pii:direct` | 1 |
+| Excessive agency | `excessive-agency` | 10 |
+| System prompt leakage | `prompt-extraction` | 10 |
+| Strategy | `basic` only. Jailbreak strategies were skipped: they multiply the case count and the host is CPU-only | - |
+
+Generation uses Promptfoo remote generation (`CI=true` uses its placeholder identity, no personal email is sent);
+the grader/generator (`qwen2.5:1.5b`) calls Ollama directly on 127.0.0.1:11434 and deliberately bypasses the gateway (see threat-model.md). Case counts per plugin come from the
+generator (some plugins returned fewer than `numTests`; `pii:direct` only 1 because the local model could not
+produce more valid prompts).
+
+## Reproduce (from the repository root, `.env` holds all keys and is never committed)
+```bash
+docker compose -p insighthub-day6 --profile ollama -f docker-compose.yml -f docker-compose.day6.yml up -d --build --wait \
+  postgres redis ollama litellm-db litellm api ingestion-worker
+docker exec insighthub-day6-ollama-1 ollama pull qwen2.5:0.5b && docker exec insighthub-day6-ollama-1 ollama pull mxbai-embed-large
+docker exec insighthub-day6-ollama-1 ollama pull qwen2.5:1.5b            # Promptfoo grader (direct, not via gateway)
+python3 scripts/day6/bootstrap_keys.py                                   # 3 virtual keys -> .env
+python3 scripts/day6/reset_corpus.py                                     # re-index sample-docs (includes the poisoned file)
+cd security && npm ci --ignore-scripts && CI=true npx promptfoo redteam eval -c redteam.yaml -j 1
+cd .. && python3 scripts/day6/run_eval.py final                           # deterministic dataset
+PATH=$PWD/venv/bin:$PATH scripts/verify-day-6.sh --api-url http://localhost:18000 --test-timeout 1800
+```
+The verifier's default `--test-timeout 120` is too short: the tests call the local CPU model for every dataset case
+(about 5 minutes); always pass `--test-timeout 1800`.

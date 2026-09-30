@@ -1,0 +1,19 @@
+--- a/chatops-bot/app/intents.py
++++ b/chatops-bot/app/intents.py
+@@ -27,6 +27,16 @@
+ 
+ 
+ def normalize(text: str) -> str:
++    """
++    Normalize the input text by removing non-alphanumeric characters, converting to lowercase,
++    and replacing multiple spaces with a single space.
++
++    Parameters:
++    text (str): The input text to be normalized.
++
++    Returns:
++    str: The normalized text.
++    """
+     text = _SLACK_FORMATTING.sub("", _MENTION.sub(" ", text)).replace("đ", "d").replace("Đ", "D")
+     folded = unicodedata.normalize("NFD", text)
+     folded = "".join(c for c in folded if unicodedata.category(c) != "Mn")

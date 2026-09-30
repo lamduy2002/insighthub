@@ -17,6 +17,7 @@ from app.core.index import check_schema, ensure_index_identity
 from app.core.metrics import ingestion_errors_total
 from app.services.chunking import chunk_text
 from app.services.embeddings import embed, validate_vectors
+from app.services.sanitize import sanitize_untrusted_text
 
 logger = logging.getLogger("insighthub.ingestion")
 MAX_EXTRACTED_CHARS = 2_000_000
@@ -110,7 +111,19 @@ def process_document(document_id: int, filename: str, content: bytes) -> int:
                     ensure_index_identity(conn, claim=False)
                     if len(content) > settings.max_upload_bytes:
                         raise InvalidDocument()
-                    chunks = chunk_text(extract_text(filename, content))
+                    text, removed = sanitize_untrusted_text(extract_text(filename, content))
+                    if removed:
+                        # Counts only: never log document content.
+                        logger.warning(
+                            json.dumps(
+                                {
+                                    "event": "ingestion_sanitized",
+                                    "document_id": document_id,
+                                    "paragraphs_removed": removed,
+                                }
+                            )
+                        )
+                    chunks = chunk_text(text)
                     ensure_index_identity(conn, claim=True)
                     vectors = validate_vectors(
                         embed(chunks, input_type="document"),

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from .audit import AuditLog
 from .infra import Infra, Notifier
+from .llm import GatewayLLM, Summarizer
 from .permissions import ApprovalStore
 from .security import SignatureError, verify_signature
 from .service import Handler, Worker
@@ -21,17 +22,19 @@ from .store import JobStore
 def create_app(settings: Settings | None = None, infra: Infra | None = None,
                notifier: Notifier | None = None, store: JobStore | None = None,
                audit: AuditLog | None = None, approvals: ApprovalStore | None = None,
-               run_worker: bool = False) -> FastAPI:
+               llm: Summarizer | None = None, run_worker: bool = False) -> FastAPI:
     settings = settings or Settings.from_env()
     audit = audit or AuditLog(settings.audit_log_path)
     store = store or JobStore(settings.queue_db_path)
     approvals = approvals or ApprovalStore(settings.approval_ttl_seconds)
+    if llm is None and settings.llm_api_key:
+        llm = GatewayLLM(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
 
     if run_worker and (infra is None or notifier is None):
         from .adapters import build_infra, build_notifier
         infra = infra or build_infra(settings)
         notifier = notifier or build_notifier(settings)
-    handler = Handler(settings, audit, infra, notifier, approvals) if infra and notifier else None
+    handler = Handler(settings, audit, infra, notifier, approvals, llm) if infra and notifier else None
     worker = Worker(store, handler, settings, audit, notifier) if handler and notifier else None
 
     @asynccontextmanager

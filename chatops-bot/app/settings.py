@@ -35,6 +35,9 @@ class Settings:
     readonly_kubeconfig: str = str(Path.home() / ".kube" / "insighthub-mcp-readonly.kubeconfig")
     mutator_kubeconfig: str = str(Path.home() / ".kube" / "insighthub-chatops-mutator.kubeconfig")
     prometheus_url: str = "http://localhost:9090"
+    llm_base_url: str = "http://127.0.0.1:4000/v1"
+    llm_api_key: str = field(default="", repr=False)
+    llm_model: str = "chat-small"
     replay_window_seconds: int = 300
     approval_ttl_seconds: int = 60
     max_attempts: int = 3
@@ -64,4 +67,7 @@ class Settings:
             mutator_kubeconfig=env.get("CHATOPS_MUTATOR_KUBECONFIG",
                                        str(home / ".kube" / "insighthub-chatops-mutator.kubeconfig")),
             prometheus_url=env.get("PROMETHEUS_URL", "http://localhost:9090"),
+            llm_base_url=env.get("CHATOPS_LLM_BASE_URL", "http://127.0.0.1:4000/v1"),
+            llm_api_key=env.get("CHATOPS_LLM_API_KEY", ""),
+            llm_model=env.get("CHATOPS_LLM_MODEL", "chat-small"),
         )

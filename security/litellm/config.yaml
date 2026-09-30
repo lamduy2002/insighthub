@@ -1,0 +1,89 @@
+# LiteLLM gateway config (pinned image v1.103.1). Models are local Ollama (real provider, no API fee).
+# input/output_cost_per_token are SHADOW prices (assumed, not a bill): Ollama reports cost 0, which
+# would make max_budget unenforceable. Shadow pricing lets budgets, attribution and the dashboard work.
+model_list:
+  - model_name: chat-small
+    litellm_params:
+      model: ollama_chat/qwen2.5:0.5b
+      api_base: http://ollama:11434
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.0000006
+  - model_name: embed-mxbai
+    litellm_params:
+      model: ollama/mxbai-embed-large
+      api_base: http://ollama:11434
+      input_cost_per_token: 0.00000002
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+  turn_off_message_logging: true   # do not persist prompts/answers (document content) in spend logs
+  callbacks: ["prometheus"]
+  require_auth_for_metrics_endpoint: false   # scraped by the kind Prometheus over the private docker network; no secrets in metrics
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  proxy_batch_write_at: 10
+
+# Runtime guardrails (layer 4). default_on is true: they apply to EVERY key and a client cannot switch them off
+# (per-key guardrail control is enterprise-only, so there is deliberately no per-key exemption). The Promptfoo grader
+# is an evaluation tool, not a workload: it calls Ollama directly on 127.0.0.1:11434 and never passes through the gateway.
+guardrails:
+  - guardrail_name: "injection-input"
+    litellm_params:
+      guardrail: litellm_content_filter
+      mode: "pre_call"
+      default_on: true
+      categories:
+        - category: "prompt_injection_jailbreak"
+          enabled: true
+          action: "BLOCK"
+          severity_threshold: "high"
+        - category: "prompt_injection_system_prompt"
+          enabled: true
+          action: "BLOCK"
+          severity_threshold: "high"
+        - category: "prompt_injection_data_exfiltration"
+          enabled: true
+          action: "BLOCK"
+          severity_threshold: "high"
+      # Vietnamese phrases (the built-in categories are English-only). LiteLLM only loads category files from its
+      # own package directory, so the Vietnamese list lives here as blocked_words.
+      blocked_words:
+        - {keyword: "bỏ qua mọi hướng dẫn", action: "BLOCK", description: "instruction override (vi)"}
+        - {keyword: "bỏ qua tất cả hướng dẫn", action: "BLOCK", description: "instruction override (vi)"}
+        - {keyword: "bỏ qua các hướng dẫn trước", action: "BLOCK", description: "instruction override (vi)"}
+        - {keyword: "bỏ qua mọi chỉ dẫn", action: "BLOCK", description: "instruction override (vi)"}
+        - {keyword: "bỏ qua chỉ dẫn trước", action: "BLOCK", description: "instruction override (vi)"}
+        - {keyword: "chế độ bảo trì", action: "BLOCK", description: "maintenance-mode jailbreak (vi)"}
+        - {keyword: "hiển thị toàn bộ biến môi trường", action: "BLOCK", description: "secret exfiltration (vi)"}
+        - {keyword: "chỉ dẫn hệ thống", action: "BLOCK", description: "system prompt extraction (vi)"}
+        - {keyword: "system compromised", action: "BLOCK", description: "forced attack string"}
+      patterns:
+        - pattern_type: "prebuilt"
+          pattern_name: "email"
+          action: "MASK"
+        - pattern_type: "prebuilt"
+          pattern_name: "generic_api_key"
+          action: "BLOCK"
+        # Chat-template / role injection (Promptfoo system-prompt-override class): text that fakes a system turn
+        - pattern_type: "regex"
+          name: "fake_role_turn"
+          pattern: '(?i)["'']?role["'']?\s*:\s*["'']?(system|developer)["'']?'
+          action: "BLOCK"
+        - pattern_type: "regex"
+          name: "chat_template_tokens"
+          pattern: '(?i)<\|(im_start|im_end|system|endoftext)\|>|\[INST\]|<<SYS>>'
+          action: "BLOCK"
+        - pattern_type: "regex"
+          name: "forced_response_prefix"
+          pattern: '(?i)(start|begin)\s+(every|each|all)\s+(response|reply|answer)s?\s+with'
+          action: "BLOCK"
+  - guardrail_name: "output-check"
+    litellm_params:
+      guardrail: litellm_content_filter
+      mode: "post_call"
+      default_on: true
+      blocked_words:
+        - keyword: "SYSTEM COMPROMISED"
+          action: "BLOCK"
+          description: "forced attack string from the poisoned document"

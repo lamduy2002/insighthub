@@ -369,3 +369,24 @@ class GenerationTests(unittest.TestCase):
                 httpx.ReadTimeout("test-secret")
             )
             post_json("https://provider.example", headers={}, payload={})
+
+
+class GatewayAttributionTests(unittest.TestCase):
+    def test_call_id_is_recorded_on_success_and_failure_without_leaking_content(self):
+        from app.core.providers import llm_calls
+
+        request = httpx.Request("POST", "http://litellm:4000/v1/chat/completions")
+        ok = httpx.Response(200, json={"a": 1}, headers={"x-litellm-call-id": "call-ok"}, request=request)
+        bad = httpx.Response(400, json={"error": "prompt secret"}, headers={"x-litellm-call-id": "call-bad"}, request=request)
+        calls: list = []
+        llm_calls.set(calls)
+        with configured(), patch("app.core.providers.httpx.Client") as factory:
+            post = factory.return_value.__enter__.return_value.post
+            post.return_value = ok
+            self.assertEqual(post_json("http://litellm:4000/v1/chat/completions", headers={}, payload={}), {"a": 1})
+            post.return_value = bad
+            with self.assertRaises(ProviderError), self.assertLogs("insighthub.llm_audit", "INFO") as logs:
+                post_json("http://litellm:4000/v1/chat/completions", headers={}, payload={"x": "prompt secret"})
+        self.assertEqual(calls, [("/v1/chat/completions", "call-ok"), ("/v1/chat/completions", "call-bad")])
+        self.assertIn("call-bad", logs.output[0])
+        self.assertNotIn("secret", logs.output[0])
