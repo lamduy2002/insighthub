@@ -22,7 +22,7 @@ _DESTRUCTIVE = re.compile(r"\b(delete|remove|xoa|drop|exec|rollout|secret|secret
 
 @dataclass(frozen=True)
 class Intent:
-    kind: str  # health | ingest | pods | scale | confirm | destructive | help
+    kind: str  # health | ingest | pods | summarize | scale | confirm | destructive | help
     args: dict[str, Any] = field(default_factory=dict)
 
 
@@ -51,4 +51,6 @@ def parse(text: str) -> Intent:
         return Intent("ingest")
     if re.search(r"\b(health|healthy|khoe|status|song|on dinh)\b", clean):
         return Intent("health")
+    if re.search(r"\b(tom tat|tinh hinh|summary|summarize|summarise|explain|giai thich)\b", clean):
+        return Intent("summarize")
     return Intent("help")
