@@ -107,6 +107,7 @@ def _real_generate(question, contexts, settings):
                 "model": model,
                 "messages": messages,
                 "stream": False,
+                "guardrails": ["injection-input", "output-check"],  # gateway guardrail, see security/litellm/config.yaml
                 "temperature": 0,  # deterministic answers: reproducible evaluation and guardrail behaviour
                 "max_completion_tokens": settings.llm_max_tokens,
             },

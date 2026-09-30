@@ -9,10 +9,10 @@ ROOT = Path(os.environ.get("INSIGHTHUB_REPO_ROOT") or Path(__file__).resolve().p
 CONFIG = yaml.safe_load((ROOT / "security" / "litellm" / "config.yaml").read_text())
 
 
-def test_guardrails_wrap_input_and_output_and_are_on_by_default():
+def test_guardrails_wrap_input_and_output_and_every_workload_requests_them():
     guards = {g["guardrail_name"]: g["litellm_params"] for g in CONFIG["guardrails"]}
-    assert guards["injection-input"]["mode"] == "pre_call" and guards["injection-input"]["default_on"] is True
-    assert guards["output-check"]["mode"] == "post_call" and guards["output-check"]["default_on"] is True
+    assert guards["injection-input"]["mode"] == "pre_call"
+    assert guards["output-check"]["mode"] == "post_call"
     categories = {c["category"] for c in guards["injection-input"]["categories"]}
     assert {"prompt_injection_jailbreak", "prompt_injection_system_prompt"} <= categories
     assert any("bỏ qua mọi hướng dẫn" in w["keyword"] for w in guards["injection-input"]["blocked_words"])
@@ -51,3 +51,9 @@ def test_our_own_prompts_do_not_trip_our_own_guardrail():
     for pattern in guards["injection-input"]["patterns"]:
         if pattern["pattern_type"] == "regex":
             assert not re.search(pattern["pattern"], text), pattern["name"]
+
+
+def test_every_workload_requests_both_guardrails_explicitly():
+    """default_on is false (per-key control is enterprise-only), so each client must opt in on every call."""
+    for path in ("api/app/services/llm.py", "chatops-bot/app/llm.py", "tools/coding-workflow/run.py"):
+        assert '"guardrails": ["injection-input", "output-check"]' in (ROOT / path).read_text(), path

@@ -35,7 +35,7 @@ class GatewayLLM:
         self.base_url, self.api_key, self.model, self.timeout = base_url.rstrip("/"), api_key, model, timeout
 
     async def summarize(self, facts: str) -> Summary:
-        payload = {"model": self.model, "max_tokens": 160, "temperature": 0,
+        payload = {"model": self.model, "max_tokens": 160, "temperature": 0, "guardrails": ["injection-input", "output-check"],
                    "messages": [{"role": "system", "content": SYSTEM},
                                 {"role": "user", "content": f"FACTS:\n{facts}\n\nTóm tắt tình hình."}]}
         headers = {"Authorization": f"Bearer {self.api_key}", "x-litellm-tags": "app:chatops-bot,purpose:summarize"}
