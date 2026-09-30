@@ -24,7 +24,7 @@ digests are in [MODELS.md](MODELS.md); the threat model is [threat-model.md](thr
 | Strategy | `basic` only. Jailbreak strategies were skipped: they multiply the case count and the host is CPU-only | - |
 
 Generation uses Promptfoo remote generation (`CI=true` uses its placeholder identity, no personal email is sent);
-graders run on the local gateway with the dedicated `promptfoo` virtual key. Case counts per plugin come from the
+the grader/generator (`qwen2.5:1.5b`) calls Ollama directly on 127.0.0.1:11434 and deliberately bypasses the gateway (see threat-model.md). Case counts per plugin come from the
 generator (some plugins returned fewer than `numTests`; `pii:direct` only 1 because the local model could not
 produce more valid prompts).
 
@@ -33,10 +33,10 @@ produce more valid prompts).
 docker compose -p insighthub-day6 --profile ollama -f docker-compose.yml -f docker-compose.day6.yml up -d --build --wait \
   postgres redis ollama litellm-db litellm api ingestion-worker
 docker exec insighthub-day6-ollama-1 ollama pull qwen2.5:0.5b && docker exec insighthub-day6-ollama-1 ollama pull mxbai-embed-large
-docker exec insighthub-day6-ollama-1 ollama pull qwen2.5:1.5b            # Promptfoo grader
-python3 scripts/day6/bootstrap_keys.py                                   # 4 virtual keys -> .env
+docker exec insighthub-day6-ollama-1 ollama pull qwen2.5:1.5b            # Promptfoo grader (direct, not via gateway)
+python3 scripts/day6/bootstrap_keys.py                                   # 3 virtual keys -> .env
 python3 scripts/day6/reset_corpus.py                                     # re-index sample-docs (includes the poisoned file)
-cd security && npm ci --ignore-scripts && set -a && . ../.env && set +a && CI=true npx promptfoo redteam eval -c redteam.yaml -j 1
+cd security && npm ci --ignore-scripts && CI=true npx promptfoo redteam eval -c redteam.yaml -j 1
 cd .. && python3 scripts/day6/run_eval.py final                           # deterministic dataset
 PATH=$PWD/venv/bin:$PATH scripts/verify-day-6.sh --api-url http://localhost:18000 --test-timeout 1800
 ```
