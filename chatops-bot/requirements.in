@@ -1,3 +1,5 @@
-# Minimal fail-closed Day5 skeleton; add Slack SDK only for chosen transport.
+# Day 5 ChatOps bot. Signature verification is hand-written (HMAC over the raw body); Slack replies use httpx.
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
+httpx==0.28.1
+mcp==2.2.0
