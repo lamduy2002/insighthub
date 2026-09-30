@@ -53,3 +53,21 @@ class SanitizeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OutputGuardTests(unittest.TestCase):
+    def test_leaks_and_forced_strings_are_redacted_but_normal_answers_pass(self):
+        from app.services.llm import SYSTEM_PROMPT
+        from app.services.sanitize import SAFE_REFUSAL, redact_leaks
+
+        self.assertEqual(redact_leaks("SYSTEM COMPROMISED", SYSTEM_PROMPT), (SAFE_REFUSAL, True))
+        self.assertEqual(redact_leaks("Biến OPENAI_API_KEY=abc", SYSTEM_PROMPT)[1], True)
+        self.assertEqual(redact_leaks("Quy tắc: " + SYSTEM_PROMPT.splitlines()[1], SYSTEM_PROMPT)[1], True)
+        ok = "Bản sao lưu chạy lúc 2 giờ sáng [nguồn: so-tay-van-hanh.md]"
+        self.assertEqual(redact_leaks(ok, SYSTEM_PROMPT), (ok, False))
+
+    def test_system_prompt_keeps_citation_contract_and_hierarchy(self):
+        from app.services.llm import SYSTEM_PROMPT
+
+        self.assertIn("[nguồn: tên_file]", SYSTEM_PROMPT)
+        self.assertIn("không đáng tin cậy", SYSTEM_PROMPT)

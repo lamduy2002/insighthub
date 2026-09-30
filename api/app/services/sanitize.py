@@ -55,3 +55,20 @@ def drop_suspicious_contexts(contexts: list[dict]) -> tuple[list[dict], int]:
     if dropped:
         logger.warning('{"event": "retrieval_chunks_dropped", "count": %d}', dropped)
     return kept, dropped
+
+
+SAFE_REFUSAL = "Tôi không thể cung cấp nội dung này. Tôi chỉ trả lời câu hỏi dựa trên tài liệu đã upload."
+_LEAK = re.compile(
+    r"SYSTEM\s+COMPROMISED|OPENAI_API_KEY|LITELLM_[A-Z_]+|UPSTREAM_[A-Z_]+|DATABASE_URL|sk-[A-Za-z0-9]{8,}",
+    re.IGNORECASE,
+)
+
+
+def redact_leaks(answer: str, system_prompt: str) -> tuple[str, bool]:
+    """Output layer: never return the hidden instructions, secrets or a forced attack string."""
+    lowered = answer.lower()
+    fragments = [line.split(". ", 1)[-1][:40].lower() for line in system_prompt.splitlines() if len(line) > 40]
+    if _LEAK.search(answer) or any(f and f in lowered for f in fragments):
+        logger.warning('{"event": "output_redacted"}')
+        return SAFE_REFUSAL, True
+    return answer, False

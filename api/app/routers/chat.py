@@ -10,6 +10,7 @@ from app.core.errors import ServiceError
 from app.core.metrics import llm_call_latency, llm_tokens_total, rag_query_latency
 from app.core.providers import llm_calls
 from app.services.llm import generate
+from app.services.sanitize import drop_suspicious_contexts
 from app.services.retrieval import retrieve
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -58,7 +59,7 @@ def chat(req: ChatRequest, response: Response):
     llm_calls.set(calls)
     try:
         with rag_query_latency.time():
-            contexts = retrieve(req.question, top_k=req.top_k)
+            contexts, _ = drop_suspicious_contexts(retrieve(req.question, top_k=req.top_k))
             if not contexts:
                 raise HTTPException(
                     404, "Chưa có tài liệu nào sẵn sàng. Hãy upload tài liệu trước."
