@@ -1,0 +1,3 @@
+PASS day5 (scope=partial-runtime-contract, runtime_verified=true)
+  PASS day5: Permission/approval/dedup and selected transport tested locally with audit; external Slack delivery not tested.
+exit=0
