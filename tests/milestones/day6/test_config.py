@@ -32,3 +32,22 @@ def test_no_secret_is_hardcoded_and_app_only_talks_to_the_gateway():
     assert CONFIG["general_settings"]["master_key"] == "os.environ/LITELLM_MASTER_KEY"
     example = (ROOT / ".env.example").read_text()
     assert "LITELLM_MASTER_KEY=" in example and not re.search(r"LITELLM_MASTER_KEY=\S", example)
+
+
+def test_our_own_prompts_do_not_trip_our_own_guardrail():
+    """Layers must not block each other: the app prompt text may not contain a blocked keyword."""
+    import ast
+
+    tree = ast.parse((ROOT / "api" / "app" / "services" / "llm.py").read_text())
+    constants = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in {"SYSTEM_PROMPT", "REMINDER"}:
+            constants[node.targets[0].id] = ast.literal_eval(node.value)
+    assert set(constants) == {"SYSTEM_PROMPT", "REMINDER"}
+    text = " ".join(constants.values()).lower()
+    guards = {g["guardrail_name"]: g["litellm_params"] for g in CONFIG["guardrails"]}
+    for word in guards["injection-input"]["blocked_words"]:
+        assert word["keyword"].lower() not in text, word["keyword"]
+    for pattern in guards["injection-input"]["patterns"]:
+        if pattern["pattern_type"] == "regex":
+            assert not re.search(pattern["pattern"], text), pattern["name"]
