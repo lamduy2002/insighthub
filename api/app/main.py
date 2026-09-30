@@ -48,7 +48,9 @@ app.add_middleware(
 @app.exception_handler(ServiceError)
 async def service_error_handler(request: Request, exc: ServiceError):
     return JSONResponse(
-        {"detail": exc.message, "code": exc.code}, status_code=exc.status_code
+        {"detail": exc.message, "code": exc.code},
+        status_code=exc.status_code,
+        headers=getattr(exc, "headers", None),
     )
 
 
