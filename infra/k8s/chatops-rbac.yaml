@@ -1,0 +1,36 @@
+# Day 5: identity riêng cho hành động write của ChatOps bot (tách khỏi mcp-readonly).
+# Chỉ đổi số replica của 2 deployment trong ns insighthub-local; không xoá, không exec, không đọc secret.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chatops-mutator
+  namespace: insighthub-local
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chatops-mutator
+  namespace: insighthub-local
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["insighthub-api", "insighthub-ingestion-worker"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: ["insighthub-api", "insighthub-ingestion-worker"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chatops-mutator
+  namespace: insighthub-local
+subjects:
+  - kind: ServiceAccount
+    name: chatops-mutator
+    namespace: insighthub-local
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chatops-mutator

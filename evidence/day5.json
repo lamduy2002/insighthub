@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "day": 5,
+  "mode": "real",
+  "observed_at": "2026-09-30T08:56:47Z",
+  "source_sha256": "8c93108d5a929eecd39dc61249a642eebaadfa9705fc3358811e21dfaf450732",
+  "note": "REAL: Slack bot live via ngrok on local host; MCP Prometheus + Kubernetes (read-only) on kind insighthub-lab; scale executes --dry-run=server; queue is SQLite (not Redis/ARQ); rule-based intents. See infra/DAY5-CHECKLIST.md section D.",
+  "artifacts": {
+    "permissions": {
+      "path": "chatops-bot/app/permissions.py",
+      "sha256": "56f73669259a025d23881d6b88f3113fcbef9da7c89dfeb74d7d7b7d5f7f8581"
+    },
+    "audit": {
+      "path": "evidence/day5-audit.json",
+      "sha256": "5c7bafa80694d1b76533820e643e334e673b6f11f7ccdbcb3494409375e0ba63"
+    }
+  }
+}

@@ -1,5 +1,18 @@
-# ChatOps - bắt buộc Day 5
+# ChatOps bot (Day 5)
 
-Starter trả501 và health ready=false để không nhận event trước auth. Học viên triển khai Slack bot LIVE đủ3 intents (health, ingestion count, pods lỗi), tái sử dụng MCP K8s/Prometheus Day2, signature/replay, permissions/approval và audit, tests/screencast.
+Luồng: Slack `app_mention` → `POST /slack/events` (verify chữ ký trên raw body, replay ≤5 phút) → dedup + enqueue vào SQLite WAL → **ACK ngay** → worker xử lý (bounded retry, backoff mũ, tối đa 3 lần) → trả lời bằng `chat.postMessage`.
 
-Transport double là unit test; không thay Slack App kết nối thật. HTTP signature kiểm tra trước challenge; ACK<3s tách khỏi AI reply bằng queue/dedup/retry. Socket Mode có thể bổ sung, giữ mục tiêu/tests bảo mật của spec. [Spec mục 9](../Running-Project-Specification-Student.md).
+- 3 intent read: health, ingest count, pods lỗi. Dữ liệu qua **MCP thật** (Prometheus `prometheus-mcp`, Kubernetes `kubernetes-mcp-server --read-only`, cấu hình như `.mcp.json`).
+- Permission 3 tầng (`app/permissions.py`): read tự động; write (`scale <api|worker> to N`, N 1-5) cần `confirm <token>` trong 60s, token một lần và gắn (user, action, args); destructive luôn bị từ chối. Thực thi scale bằng identity riêng `chatops-mutator` (`infra/k8s/chatops-rbac.yaml`), `--dry-run=server`.
+- Queue SQLite nằm ở `~/.local/state/insighthub-chatops/queue.db` (ngoài repo; đổi bằng `CHATOPS_QUEUE_DB`).
+- Audit JSONL: `chatops-bot/chatops-audit.log` (`timestamp`, `event_id`, `action`, `decision`, `user`, ...). Không ghi secret/token.
+- Catalog intent: `prompts/intents.md`.
+
+## Chạy local
+```sh
+cp .env.example .env   # điền SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, SLACK_BOT_USER_ID, CHATOPS_APPROVERS
+cd chatops-bot && ../venv/bin/uvicorn app.main:app --port 8080
+ngrok http 8080        # Request URL: https://<ngrok>/slack/events
+```
+## Test
+`pytest chatops-bot/tests/` (chạy lại `tests/milestones/day5/`, nơi verifier tìm test thật). Không dùng Slack/MCP/cluster thật.

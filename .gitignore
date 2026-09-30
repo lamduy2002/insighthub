@@ -54,3 +54,8 @@ reports/
 
 # --- MCP kubeconfig (chứa token, không commit) ---
 infra/k8s/*.kubeconfig
+
+# --- ChatOps bot runtime (Day 5) ---
+chatops-bot/*.db
+chatops-bot/*.db-wal
+chatops-bot/*.db-shm

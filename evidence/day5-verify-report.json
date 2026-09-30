@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "target": "day5",
+  "status": "PASS",
+  "scope": "partial-runtime-contract",
+  "runtime_verified": true,
+  "source_sha256": "8c93108d5a929eecd39dc61249a642eebaadfa9705fc3358811e21dfaf450732",
+  "milestone_complete": false,
+  "checks": [
+    {
+      "id": "day5",
+      "status": "PASS",
+      "runtime_verified": true,
+      "tests": 36,
+      "bot_transport": "http",
+      "note": "Permission/approval/dedup and selected transport tested locally with audit; external Slack delivery not tested."
+    }
+  ],
+  "specification_review_required": true,
+  "note": "PASS covers implemented checks only, not all project requirements; use the complete specification and reviewer evidence."
+}
