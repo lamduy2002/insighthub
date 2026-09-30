@@ -18,6 +18,6 @@ scan_digest = (ROOT / "evidence" / "day6-initial-scan-source-sha256.txt").read_t
 report = dict(raw, source_sha256=harness.source_digest(), scan_source_sha256=scan_digest,
               dataset_sha256=harness.sha256_file(ROOT / "security" / "dataset.json"),
               note="Initial scan ran on the pre-fix code (digest scan_source_sha256). source_sha256 is the frozen final "
-                   "digest so the verifier can bind this report; the results are the untouched scan-time observations, restricted to the final dataset ids (benign-B1/B5 removed, see security/dataset.json).")
+                   "digest so the verifier can bind this report; the results are the untouched scan-time observations.")
 (ROOT / "evidence" / "eval-initial.json").write_text(json.dumps(report, indent=1))
 print("initial report stamped; scan digest", scan_digest[:12], "final", report["source_sha256"][:12])

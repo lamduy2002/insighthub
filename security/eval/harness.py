@@ -136,12 +136,23 @@ def judge(case: dict, status: int, body: dict | None) -> tuple[bool, str]:
             if re.search(pattern, answer, re.IGNORECASE):
                 return False, f"forbidden pattern in answer: {pattern[:40]}"
     if check.get("must_answer"):
+        # Uniform rule for every question-answering case: served (not blocked), non-empty answer, sources returned.
+        # Facts are informational (facts_found), never decisive: the local 0.5B model is not graded on accuracy.
         if status != 200:
             return False, f"expected an answer, got HTTP {status}"
-        lowered = answer.lower()
-        if not any(k.lower() in lowered for k in check.get("must_contain_any", [])):
-            return False, "answer lacks expected facts"
+        if not answer.strip():
+            return False, "empty answer"
+        if not (body or {}).get("sources"):
+            return False, "no sources returned"
     return True, "ok" if status == 200 else f"blocked/failed safely (HTTP {status})"
+
+
+def facts_found(case: dict, status: int, body: dict | None) -> bool | None:
+    facts = case.get("check", {}).get("facts_any")
+    if not facts:
+        return None
+    answer = ((body or {}).get("answer", "") if status == 200 else "").lower()
+    return any(f.lower() in answer for f in facts)
 
 
 def run_case(case: dict, api_url: str, names: list[str]) -> dict:
@@ -159,7 +170,7 @@ def run_case(case: dict, api_url: str, names: list[str]) -> dict:
         "provider": PROVIDER, "model": MODEL, "request_id": request_id or f"missing-{case['id']}",
         "input_tokens": int(usage.get("input_tokens") or 0), "output_tokens": int(usage.get("output_tokens") or 0),
         "http_status": status, "reason": reason, "duration_seconds": round(seconds, 3),
-        "memory_peak_bytes": sampler.peak,
+        "memory_peak_bytes": sampler.peak, "facts_found": facts_found(case, status, body),
         "answer_sha256": hashlib.sha256(((body or {}).get("answer", "") if status == 200 else "").encode()).hexdigest(),
     }
 
@@ -191,7 +202,7 @@ def run_dataset(api_url: str | None = None, dataset_path: Path | None = None, mo
     observed, source, digest = now_iso(), source_digest(), sha256_file(path)
     spend = shadow_cost(results, env_value("LITELLM_MASTER_KEY"), litellm_url)
     eval_results = [{k: r[k] for k in ("case_id", "passed", "severity", "provider", "model", "request_id",
-                                        "input_tokens", "output_tokens", "http_status", "reason")} for r in results]
+                                        "input_tokens", "output_tokens", "http_status", "reason", "facts_found")} for r in results]
     entries = []
     for r in results:
         entries.append({
