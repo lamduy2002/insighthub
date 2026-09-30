@@ -8,13 +8,6 @@ model_list:
       api_base: http://ollama:11434
       input_cost_per_token: 0.00000015
       output_cost_per_token: 0.0000006
-  # Grader for Promptfoo: qwen2.5:0.5b gave incoherent pass/fail verdicts, so a slightly larger local model judges.
-  - model_name: chat-grader
-    litellm_params:
-      model: ollama_chat/qwen2.5:1.5b
-      api_base: http://ollama:11434
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000012
   - model_name: embed-mxbai
     litellm_params:
       model: ollama/mxbai-embed-large
@@ -31,17 +24,15 @@ general_settings:
   database_url: os.environ/DATABASE_URL
   proxy_batch_write_at: 10
 
-# Runtime guardrail (layer 4). default_on is false on purpose: per-key guardrail control is enterprise-only and the
-# Promptfoo grader legitimately sends attack text, so it must not be blocked. The three workloads (InsightHub, bot,
-# coding workflow) request both guardrails explicitly in every call: "guardrails": ["injection-input", "output-check"].
-# (was: layer 3): regex/keyword content filter, OSS, no external dependency. It is a shallow
-# layer by design: paragraph sanitization (ingestion) and prompt/output guards in the app sit around it.
+# Runtime guardrails (layer 4). default_on is true: they apply to EVERY key and a client cannot switch them off
+# (per-key guardrail control is enterprise-only, so there is deliberately no per-key exemption). The Promptfoo grader
+# is an evaluation tool, not a workload: it calls Ollama directly on 127.0.0.1:11434 and never passes through the gateway.
 guardrails:
   - guardrail_name: "injection-input"
     litellm_params:
       guardrail: litellm_content_filter
       mode: "pre_call"
-      default_on: false
+      default_on: true
       categories:
         - category: "prompt_injection_jailbreak"
           enabled: true
@@ -91,7 +82,7 @@ guardrails:
     litellm_params:
       guardrail: litellm_content_filter
       mode: "post_call"
-      default_on: false
+      default_on: true
       blocked_words:
         - keyword: "SYSTEM COMPROMISED"
           action: "BLOCK"

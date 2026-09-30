@@ -16,7 +16,7 @@ import harness  # noqa: E402
 URL = harness.env_value("LITELLM_URL", "http://127.0.0.1:4000")
 MASTER = {"Authorization": "Bearer " + harness.env_value("LITELLM_MASTER_KEY")}
 KEYS = {"insighthub": "OPENAI_API_KEY", "chatops-bot": "LITELLM_KEY_CHATOPS_BOT",
-        "coding-workflow": "LITELLM_KEY_CODING_WORKFLOW", "promptfoo": "LITELLM_KEY_PROMPTFOO"}
+        "coding-workflow": "LITELLM_KEY_CODING_WORKFLOW"}
 TINY = {"model": "chat-small", "max_tokens": 8, "messages": [{"role": "user", "content": "Xin chào"}]}
 
 

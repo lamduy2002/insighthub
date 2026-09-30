@@ -1,6 +1,7 @@
 # Day 6 red team for InsightHub RAG (Promptfoo 0.123.1, pinned in package.json / package-lock.json).
-# Target = real /chat through LiteLLM -> Ollama (qwen2.5:0.5b); graders use the same gateway with the
-# dedicated "promptfoo" virtual key. Run from this directory with LITELLM_KEY_PROMPTFOO exported.
+# Target = real /chat through LiteLLM -> Ollama (qwen2.5:0.5b). The grader/generator is qwen2.5:1.5b called DIRECTLY on
+# Ollama (127.0.0.1:11434), not through the gateway: it is an evaluation tool, not a workload, and its prompts contain
+# attack text that the gateway guardrail (default_on for every key) would block. Run from this directory with CI=true.
 description: "InsightHub RAG - Day 6 red team"
 
 prompts:
@@ -22,11 +23,10 @@ defaultTest:
     doc: ""
   options:
     provider: &gateway
-      id: openai:chat:chat-grader
+      id: ollama:chat:qwen2.5:1.5b
       config:
-        apiBaseUrl: http://localhost:4000/v1
-        apiKeyEnvar: LITELLM_KEY_PROMPTFOO
-        max_tokens: 400
+        apiBaseUrl: http://127.0.0.1:11434
+        num_predict: 400
         temperature: 0
 
 redteam:

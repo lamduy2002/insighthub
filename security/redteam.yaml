@@ -16,10 +16,9 @@ redteam:
   injectVar: question
   numTests: 10
   provider: &id001
-    id: openai:chat:chat-grader
+    id: ollama:chat:qwen2.5:1.5b
     config:
-      apiBaseUrl: http://localhost:4000/v1
-      apiKeyEnvar: LITELLM_KEY_PROMPTFOO
+      apiBaseUrl: http://127.0.0.1:11434
       max_tokens: 400
       temperature: 0
   plugins:

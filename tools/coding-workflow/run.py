@@ -89,7 +89,7 @@ def validate_proposal(original: str, proposed: str) -> tuple[bool, str]:
 
 
 def call_gateway(prompt: str, base_url: str, key: str, model: str) -> dict:
-    body = json.dumps({"model": model, "max_tokens": 600, "temperature": 0, "guardrails": ["injection-input", "output-check"], "messages": [
+    body = json.dumps({"model": model, "max_tokens": 600, "temperature": 0, "messages": [
         {"role": "system", "content": "Bạn là trợ lý lập trình. Chỉ trả về mã Python trong một khối ```python."},
         {"role": "user", "content": prompt}]}).encode()
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", body, {

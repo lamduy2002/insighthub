@@ -4,6 +4,8 @@
 # Separate project name => separate volumes (new embedding space), Day 4 kind cluster untouched.
 services:
   ollama:
+    # Loopback only: used by the Promptfoo grader/generator (evaluation tool, deliberately outside the gateway).
+    ports: ["127.0.0.1:11434:11434"]
     mem_limit: 1400m
     environment:
       OLLAMA_MAX_LOADED_MODELS: "1"

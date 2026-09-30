@@ -53,7 +53,10 @@ def test_our_own_prompts_do_not_trip_our_own_guardrail():
             assert not re.search(pattern["pattern"], text), pattern["name"]
 
 
-def test_every_workload_requests_both_guardrails_explicitly():
-    """default_on is false (per-key control is enterprise-only), so each client must opt in on every call."""
+def test_guardrails_are_default_on_for_every_key():
+    """default_on true: clients cannot opt out; nobody is exempt (the grader bypasses the gateway instead)."""
+    for guard in CONFIG["guardrails"]:
+        assert guard["litellm_params"]["default_on"] is True, guard["guardrail_name"]
+    assert "chat-grader" not in {m["model_name"] for m in CONFIG["model_list"]}
     for path in ("api/app/services/llm.py", "chatops-bot/app/llm.py", "tools/coding-workflow/run.py"):
-        assert '"guardrails": ["injection-input", "output-check"]' in (ROOT / path).read_text(), path
+        assert '"guardrails"' not in (ROOT / path).read_text(), path  # enforcement must not depend on the client

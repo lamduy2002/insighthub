@@ -9,7 +9,6 @@ BASE = os.environ.get("LITELLM_URL", "http://127.0.0.1:4000")
 # alias -> (env var, max_budget in shadow USD, allowed models)
 KEYS = {
     "insighthub": ("OPENAI_API_KEY", 1.2, ["chat-small", "embed-mxbai"]),
-    "promptfoo": ("LITELLM_KEY_PROMPTFOO", 1.0, ["chat-small"]),
     "chatops-bot": ("LITELLM_KEY_CHATOPS_BOT", 0.3, ["chat-small"]),
     "coding-workflow": ("LITELLM_KEY_CODING_WORKFLOW", 0.5, ["chat-small"]),
 }

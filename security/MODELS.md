@@ -6,6 +6,7 @@ Gateway: LiteLLM v1.103.1, image `ghcr.io/berriai/litellm@sha256:df15400b5b80925
 | Gateway alias | Model | Quantization | Model ID / manifest sha256 |
 |---|---|---|---|
 | `chat-small` | `qwen2.5:0.5b` (494M params, ctx 32768) | Q4_K_M | `a8b0c5157701`, manifest `a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67` |
+| (not on the gateway) Promptfoo grader/generator | `qwen2.5:1.5b` (1.5B params) | Q4_K_M | `65ec06548149`, manifest `65ec06548149b04c096a120e4a6da9d4017ea809c91734ea5631e89f96ddc57b`; called directly on `127.0.0.1:11434` |
 | `embed-mxbai` | `mxbai-embed-large` (334M params, 1024 dims) | F16 | `468836162de7`, manifest `468836162de7f81e041c43663fedbbba921dcea9b9fefea135685a39b2d83dd8` |
 
 Pricing: Ollama has no provider fee (real cost 0; resource usage is measured). `security/litellm/config.yaml` sets
