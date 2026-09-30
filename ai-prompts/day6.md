@@ -1,13 +1,13 @@
 # Day 6 AI Prompts
 
-Ba prompt thiết kế dưới đây là **nguyên văn** những gì tôi đã gửi trong phiên làm Day 6 (30/09/2026), chép
+Năm prompt thiết kế dưới đây là **nguyên văn** những gì tôi đã gửi trong phiên làm Day 6 (30/09/2026), chép
 trực tiếp từ transcript (chỉ bỏ thẻ bao `<pasted_content>` của giao diện), không chỉnh cho đẹp và không chép
 từ prompt pack của giảng viên. Các tin nhắn ngắn còn lại chỉ là nhắc trạng thái. Phiên dùng Claude Code
 v2.1.285 (`claude --version`), model Sonnet 5.5 (`claude-sonnet-5-5`), đăng nhập Claude Team subscription
 (không dùng API key). Giờ lấy theo mốc commit trong repo nên ghi "khoảng".
 
 Lưu ý trung thực: prompt 2 chọn provider Zenlayer, nhưng key giảng viên cấp đã hết hạn (`GET /v1/models`
-trả 401 "Expired API key ... 2026-09-27"). Prompt 3 chuyển hẳn sang Ollama local. Zenlayer chưa từng được gọi
+trả 401 "Expired API key ... 2026-09-27"). Prompt 3 chuyển hẳn sang Ollama local. Prompt 4 và 5 sửa thiết kế guardrail và dataset sau khi tôi review kết quả. Zenlayer chưa từng được gọi
 để sinh bằng chứng nào.
 
 ---
@@ -117,3 +117,60 @@ Sau đó làm tiếp đủ 8 mục theo thứ tự đã chốt. Báo ngắn (≤
 ````
 
 **Kết quả / Quyết định**: RAM còn ≈1.8GB khi chạy đủ stack nên làm luôn: Ollama 0.33.3 (mem_limit 1.4GB, `OLLAMA_MAX_LOADED_MODELS=1`), `qwen2.5:0.5b` + `mxbai-embed-large`, LiteLLM v1.103.1 pin digest. Giá giả định (shadow price) trong LiteLLM để `max_budget` chạy được, cost thật = 0 nên cost report dùng `resource_usage` đo từ cgroup. Grader `qwen2.5:0.5b` cho kết quả vô nghĩa, đã thay bằng `qwen2.5:1.5b` (run 1 lưu ở `evidence/run1/`).
+
+
+---
+
+## Prompt 4 - Guardrail theo key và dataset không được hạ chuẩn
+
+**Host**: Claude Code
+**Version / Model / Auth mode**: Claude Code v2.1.285, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Team subscription
+**Context / Evidence**: `security/litellm/config.yaml`, `security/dataset.json`, kết quả final scan lần 1 (24/41 fail do grader bị guardrail chặn)
+**Time**: 30/09/2026, khoảng 21:00 (+07)
+
+**Prompt**:
+````
+2 việc phải sửa trước khi freeze:
+
+A. Guardrail không được là tùy chọn phía client. default_on: false + client tự xin guardrail cho phép bypass: gửi request bằng key insighthub mà không kèm guardrail là qua được (pitfall "virtual key bypass", mâu thuẫn threat model). Đổi sang gắn guardrail THEO VIRTUAL KEY tại gateway (LiteLLM key-level guardrails): key insighthub, chatops-bot, coding-workflow luôn bị áp guardrail và client không tắt được; chỉ key promptfoo (grader) không gắn. Thêm test chứng minh: request bằng key insighthub KHÔNG kèm cờ guardrail vẫn bị chặn khi có tấn công. Kiểm lại cách này LiteLLM bản pin có hỗ trợ thật không; nếu không, báo tôi phương án thay thế trước khi làm.
+
+B. Dataset:
+1. KHÔNG xóa ca nào để eval xanh (spec cấm hạ assertion để lấy PASS). Khôi phục các ca đã bỏ.
+2. Tiêu chí pass của MỌI ca benign (đồng loạt) = không bị chặn + answer không rỗng + có sources. Facts chỉ là trường thông tin phụ, không quyết định passed. Ghi lý do trong dataset và submission.
+3. Khôi phục must_answer của I4, trừ khi có lý do bảo mật rõ ràng (báo tôi trước).
+4. Mọi thay đổi dataset: 1 commit riêng, message rõ đổi gì và vì sao.
+5. eval_initial và eval_final phải cùng dataset_sha256: sau khi chốt dataset, chạy lại eval initial trên stack CHƯA SỬA (checkout commit trước fix hoặc tắt fix + guardrail), rồi bật lại và chạy final.
+
+Sau A và B: chạy lại final scan Promptfoo, triage từng ca fail (tấn công thật hay grader nhiễu), ghi bảng trong submission, không che. Báo tôi ngắn gọn trước khi freeze.
+````
+
+**Kết quả / Quyết định**: LiteLLM v1.103.1 trả 403 "Enterprise only" cho guardrail cấp key nên agent báo phương án thay thế thay vì tự làm. Dataset khôi phục đủ 22 ca (commit `5cc7a31`), tiêu chí benign thống nhất, initial chạy lại trên stack chưa sửa (api/worker từ commit `e99d606`).
+
+---
+
+## Prompt 5 - Chốt phương án A2 và lộ trình đến hạn nộp
+
+**Host**: Claude Code
+**Version / Model / Auth mode**: Claude Code v2.1.285, Sonnet 5.5 (`claude-sonnet-5-5`), Claude Team subscription
+**Context / Evidence**: báo cáo phương án A1/A2 của agent; `docker-compose.day6.yml`; `security/litellm/config.yaml`
+**Time**: 30/09/2026, khoảng 22:10 (+07)
+
+**Prompt**:
+````
+Chọn A2: guardrail default_on: true tại gateway cho MỌI key (client không tắt được). Grader Promptfoo gọi thẳng Ollama qua cổng loopback 127.0.0.1:11434, không qua gateway. Bỏ key promptfoo khỏi gateway (spec chỉ đòi 3 key: insighthub, chatops-bot, coding-workflow). Ghi rõ trong submission và threat model: grader là công cụ đánh giá, không phải workload, nên cố ý không đi qua gateway.
+
+Thêm test: request bằng key insighthub KHÔNG kèm cờ guardrail vẫn bị chặn khi có tấn công.
+
+Sau đó làm liền, không dừng hỏi trừ khi có rủi ro:
+1. Chạy lại final scan Promptfoo 63 ca. Triage từng ca fail (tấn công thật hay grader nhiễu), ghi bảng trong submission, không che.
+2. Cập nhật threat-model.md và DAY6-CHECKLIST.md trạng thái cuối.
+3. Freeze source (commit + push hết).
+4. Eval final trên dataset 22 ca (cùng dataset_sha256 với initial), tạo cost report, evidence/day6.json.
+5. Chạy PATH=$PWD/venv/bin:$PATH scripts/verify-day-6.sh --api-url http://localhost:18000 --test-timeout 1800. Phải PASS. Lưu output, git add -f evidence, push.
+6. Mở PR day6-security base day5-chatops, title "[Day 6] Security & FinOps: Promptfoo red team, guardrails, LiteLLM gateway with budgets".
+7. Soạn evidence/day6-submission.md theo §10.8.
+
+Hạn 23:59. Báo ngắn sau bước 1 (kết quả final scan) và sau bước 5 (verify).
+````
+
+**Kết quả / Quyết định**: A2 áp dụng (`0c4927a`). Final scan và eval final tranh nhau một Ollama 2 vCPU nên scan bị tạm dừng (SIGSTOP) để eval và verify chạy một mình trước, vì hạn nộp.
