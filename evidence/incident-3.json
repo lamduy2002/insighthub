@@ -1,0 +1,243 @@
+{
+  "incident_id": "incident-3-error-burst",
+  "started_at": "2026-09-29T19:57:30Z",
+  "ended_at": "2026-09-29T20:17:00Z",
+  "alert": "InsightHubErrorRateAnomaly",
+  "summary": "Redis mat ket noi (redis_up=0 tu 2026-09-29T20:07:30Z den 2026-09-29T20:12:30Z, pod insighthub-deps-redis-0 bi xoa luc 20:07:17Z va tao lai luc 20:11:35Z theo K8s events); trong thoi gian do POST /documents tra 500 (ty le 5xx dinh 0.497 luc 20:11:30Z, baseline 0) va ingestion-worker crashloop (restarts 0 -> 6).",
+  "root_cause": "Pod Redis insighthub-deps-redis-0 bi xoa/khoi tao lai (K8s events: Killing 2026-09-29T20:07:17Z, Scheduled 2026-09-29T20:11:35Z), khien queue backend khong kha dung; API /documents tra 500 va ingestion-worker khong ket noi duoc queue nen CrashLoopBackOff. Ai/quy trinh nao xoa pod chua xac dinh.",
+  "confidence": 0.75,
+  "confidence_reason": "Co 2 tin hieu doc lap khop thoi diem (metric redis_up=0 tu 20:07:30Z; K8s events Killing/Scheduled cua pod redis + worker restarts/replicas=0), va 3 gia thuyet thay the bi bac. Khong doc log nen co che 500 (enqueue that bai) chua truc tiep xac nhan.",
+  "hypotheses": [
+    "Redis khong kha dung trong su co, baseline 1 | bang chung: redis_up{container=\"redis-exporter\",job=\"insighthub-redis-exporter\",namespace=\"insighthub-local\"} = 0.0 @ 2026-09-29T20:07:30Z (baseline redis_up{container=\"redis-exporter\",job=\"insighthub-redis-exporter\",namespace=\"insighthub-local\"} = 1.0 @ 2026-09-29T19:57:30Z)",
+    "Ty le loi 5xx tang tu 0 sau khi Redis mat, dinh 20:11:30Z | bang chung: insighthub:http_error_ratio:rate5m{} = 0.4971612717342626 @ 2026-09-29T20:11:30Z (baseline insighthub:http_error_ratio:rate5m{} = 0.0 @ 2026-09-29T19:57:30Z)",
+    "ingestion-worker crashloop cung luc voi Redis mat | bang chung: kube_pod_container_status_restarts_total{container=\"ingestion-worker\",namespace=\"insighthub-local\",pod=\"insighthub-ingestion-worker-7cb94c96f8-hmld2\"} = 6.0 @ 2026-09-29T20:14:30Z (baseline kube_pod_container_status_restarts_total{container=\"ingestion-worker\",namespace=\"insighthub-local\",pod=\"insighthub-ingestion-worker-7cb94c96f8-hmld2\"} = 0.0 @ 2026-09-29T19:57:30Z)",
+    "Worker khong con replica san sang trong su co | bang chung: kube_deployment_status_replicas_available{deployment=\"insighthub-ingestion-worker\",namespace=\"insighthub-local\"} = 0.0 @ 2026-09-29T20:08:00Z (baseline kube_deployment_status_replicas_available{deployment=\"insighthub-ingestion-worker\",namespace=\"insighthub-local\"} = 1.0 @ 2026-09-29T19:57:30Z)",
+    "Tai lieu ket o pending vi khong co worker xu ly | bang chung: insighthub_documents_total{status=\"pending\",job=\"insighthub-api\",namespace=\"insighthub-local\",pod=\"insighthub-api-776f558c-gw88j\"} = 85.0 @ 2026-09-29T20:11:30Z (baseline = 0.0 @ 2026-09-29T19:57:30Z)"
+  ],
+  "ruled_out": [
+    "Postgres/DB loi hoac cham | bang chung: pg_up{container=\"postgres-exporter\",job=\"insighthub-postgres-exporter\",namespace=\"insighthub-local\"} = 1.0 @ 2026-09-29T19:57:30Z (gia tri min trong toan cua so la 1.0, khong roi xuong 0)",
+    "Rollout/restart cua api hoac deploy gan do | bang chung: kube_pod_container_status_restarts_total{container=\"api\",namespace=\"insighthub-local\",pod=\"insighthub-api-776f558c-gw88j\"} = 0.0 @ 2026-09-29T19:57:30Z (gia tri max trong cua so la 0.0; cac rollout api trong K8s events xay ra truoc cua so, 19:20Z-19:28Z)",
+    "Nha cung cap LLM/embedding cham hoac loi | bang chung: insighthub:llm_call_latency_seconds:p95_5m{} = 0.23750000000000002 @ 2026-09-29T20:01:30Z (max trong cua so, khong doi so voi baseline 0.2375); insighthub_ingestion_errors_total = 0.0 @ 2026-09-29T19:57:30Z (max trong cua so la 0.0)"
+  ],
+  "unverified": [
+    "Co che chinh xac lam POST /documents tra 500 (enqueue vao Redis that bai) - can doc ma loi trong log api luc 20:08-20:12Z hoac trace request /documents",
+    "Ai/quy trinh nao da xoa pod insighthub-deps-redis-0 luc 20:07:17Z - can kubernetes audit log hoac lich su lenh kubectl",
+    "Muc dung node CPU/RAM trong su co - truy van node_cpu_seconds_total khong cho thay bat thuong nhung khong lay thanh sample; can node_memory_MemAvailable_bytes",
+    "Nguyen nhan worker thoat Error (last_terminated_reason=Error) - can exit code/log cua worker"
+  ],
+  "no_data": [
+    "ALERTS{alertname=\"InsightHubErrorRateAnomaly\"} truy van instant tai 2026-09-29T20:05:00Z (truoc khi firing) tra rong; range query moi thay pending 20:08:30Z va firing 20:10:30Z"
+  ],
+  "samples": [
+    {
+      "metric": "kube_pod_container_status_restarts_total",
+      "labels": {
+        "container": "api",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-api-776f558c-gw88j",
+        "service": "kube-prom-stack-kube-state-metrics",
+        "uid": "8d3268ec-bfcf-4de9-849f-ca882b279b34"
+      },
+      "timestamp": "2026-09-29T19:57:30Z",
+      "value": 0.0
+    },
+    {
+      "metric": "insighthub:http_error_ratio:rate5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:57:30Z",
+      "value": 0.0
+    },
+    {
+      "metric": "insighthub:http_error_ratio:rate5m",
+      "labels": {},
+      "timestamp": "2026-09-29T20:11:30Z",
+      "value": 0.4971612717342626
+    },
+    {
+      "metric": "insighthub_ingestion_errors_total",
+      "labels": {
+        "container": "api",
+        "endpoint": "http",
+        "instance": "10.244.0.28:8000",
+        "job": "insighthub-api",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-api-776f558c-gw88j",
+        "service": "insighthub-api"
+      },
+      "timestamp": "2026-09-29T19:57:30Z",
+      "value": 0.0
+    },
+    {
+      "metric": "insighthub:llm_call_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T20:01:30Z",
+      "value": 0.23750000000000002
+    },
+    {
+      "metric": "insighthub_documents_total",
+      "labels": {
+        "container": "api",
+        "endpoint": "http",
+        "instance": "10.244.0.28:8000",
+        "job": "insighthub-api",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-api-776f558c-gw88j",
+        "service": "insighthub-api",
+        "status": "pending"
+      },
+      "timestamp": "2026-09-29T19:57:30Z",
+      "value": 0.0
+    },
+    {
+      "metric": "insighthub_documents_total",
+      "labels": {
+        "container": "api",
+        "endpoint": "http",
+        "instance": "10.244.0.28:8000",
+        "job": "insighthub-api",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-api-776f558c-gw88j",
+        "service": "insighthub-api",
+        "status": "pending"
+      },
+      "timestamp": "2026-09-29T20:11:30Z",
+      "value": 85.0
+    },
+    {
+      "metric": "pg_up",
+      "labels": {
+        "container": "postgres-exporter",
+        "endpoint": "metrics",
+        "instance": "10.244.0.20:9187",
+        "job": "insighthub-postgres-exporter",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-postgres-exporter-7cbb9d57fb-8qtp7",
+        "service": "insighthub-postgres-exporter"
+      },
+      "timestamp": "2026-09-29T19:57:30Z",
+      "value": 1.0
+    },
+    {
+      "metric": "kube_deployment_status_replicas_available",
+      "labels": {
+        "container": "kube-state-metrics",
+        "deployment": "insighthub-ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics"
+      },
+      "timestamp": "2026-09-29T19:57:30Z",
+      "value": 1.0
+    },
+    {
+      "metric": "kube_deployment_status_replicas_available",
+      "labels": {
+        "container": "kube-state-metrics",
+        "deployment": "insighthub-ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics"
+      },
+      "timestamp": "2026-09-29T20:08:00Z",
+      "value": 0.0
+    },
+    {
+      "metric": "kube_pod_container_status_restarts_total",
+      "labels": {
+        "container": "ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-ingestion-worker-7cb94c96f8-hmld2",
+        "service": "kube-prom-stack-kube-state-metrics",
+        "uid": "31915b9a-a1f8-4429-8812-55ce5b5d32ef"
+      },
+      "timestamp": "2026-09-29T19:57:30Z",
+      "value": 0.0
+    },
+    {
+      "metric": "kube_pod_container_status_restarts_total",
+      "labels": {
+        "container": "ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-ingestion-worker-7cb94c96f8-hmld2",
+        "service": "kube-prom-stack-kube-state-metrics",
+        "uid": "31915b9a-a1f8-4429-8812-55ce5b5d32ef"
+      },
+      "timestamp": "2026-09-29T20:14:30Z",
+      "value": 6.0
+    },
+    {
+      "metric": "redis_up",
+      "labels": {
+        "container": "redis-exporter",
+        "endpoint": "metrics",
+        "instance": "10.244.0.19:9121",
+        "job": "insighthub-redis-exporter",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-redis-exporter-74f8654685-v5r9w",
+        "service": "insighthub-redis-exporter"
+      },
+      "timestamp": "2026-09-29T19:57:30Z",
+      "value": 1.0
+    },
+    {
+      "metric": "redis_up",
+      "labels": {
+        "container": "redis-exporter",
+        "endpoint": "metrics",
+        "instance": "10.244.0.19:9121",
+        "job": "insighthub-redis-exporter",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-redis-exporter-74f8654685-v5r9w",
+        "service": "insighthub-redis-exporter"
+      },
+      "timestamp": "2026-09-29T20:07:30Z",
+      "value": 0.0
+    }
+  ],
+  "tools_used": [
+    "mcp__prometheus__prometheus_query",
+    "mcp__prometheus__prometheus_query_range",
+    "mcp__prometheus__prometheus_list_metrics",
+    "mcp__kubernetes__events_list",
+    "scripts/chaos/harvest-samples.py"
+  ],
+  "recommended_actions": [
+    "Dat Redis (StatefulSet insighthub-deps-redis) o che do bao ve khoi xoa ngoai y muon (PDB, RBAC) va bat persistence - lien quan gia thuyet redis_up=0",
+    "Cho POST /documents tra 503 co kiem soat va retry thay vi 500 khi Redis down; canh bao redis_up==0 - lien quan gia thuyet ty le 5xx",
+    "Cho ingestion-worker retry ket noi Redis voi backoff thay vi thoat - lien quan gia thuyet worker crashloop/replicas=0",
+    "Doi soat va re-enqueue cac tai lieu pending sau khi Redis phuc hoi - lien quan gia thuyet pending=85"
+  ],
+  "injected_fault": {
+    "name": "error-burst",
+    "script": "scripts/chaos/inject-error-burst.sh",
+    "mechanism": "StatefulSet insighthub-deps-redis scaled to 0 (Redis is emptyDir, queue/results only). /readyz checks only the DB so the API stays in rotation, POST /documents fails to enqueue and returns HTTP 500 (probed: 500 in 7 ms), and the ingestion-worker cannot reach Redis and restarts. 90 unique uploads, one per 3s. Recovery: StatefulSet scaled back to 1, chaos-* documents deleted.",
+    "fault_started_at": "2026-09-29T20:07:17Z",
+    "fault_removed_at": "2026-09-29T20:11:34Z"
+  },
+  "injected_fault_evaluation": {
+    "verdict": "correct on root cause, imprecise on mechanism",
+    "detail": "The blind investigator identified that Redis was unavailable from 20:07:17Z to 20:11:35Z (redis_up 1 -> 0 -> 1, matching the script), that the 5xx ratio (peak 0.497) came only from /documents, that the worker lost its consumer and restarted (6 restarts, availability 0) and that pending documents piled up, and it ruled out Postgres, an api rollout and a slow LLM provider with harvested samples. Imprecision: it described the Redis pod as deleted and recreated, whereas the StatefulSet was deliberately scaled to 0 (the 4 min 18 s gap between Killing and Scheduled in events points to that, which it did not conclude). It correctly listed who/what removed the pod and the exact enqueue failure mechanism as unverified. K8s event evidence appears only in prose, not in samples, as it declared."
+  },
+  "chaos_window": {
+    "started_at": "2026-09-29T20:07:17Z",
+    "fault_removed_at": "2026-09-29T20:11:34Z",
+    "ended_at": "2026-09-29T20:14:30Z"
+  },
+  "investigation_window_note": "started_at is ~10 min before the fault (after incident 2 had recovered), ended_at is after the alert resolved; samples must fall inside this window (verify.py:618).",
+  "rca_method": "Independent subagent with no session context and no knowledge of the injected fault; Prometheus MCP + Kubernetes MCP; samples verbatim from scripts/chaos/harvest-samples.py; prompt: observability/rca-prompt.md. hypotheses/ruled_out/samples are unedited subagent output (written in Vietnamese without diacritics)."
+}

@@ -1,0 +1,246 @@
+{
+  "incident_id": "incident-1-llm-latency",
+  "started_at": "2026-09-29T19:05:29Z",
+  "ended_at": "2026-09-29T19:33:00Z",
+  "alert": "InsightHubLLMLatencyAnomaly",
+  "summary": "p95 latency of LLM calls rose from 0.2375s to 4.875s while 5xx ratio and queue depth stayed at 0; onset (first elevated sample 2026-09-29T19:22:00Z) follows a Deployment rollout of insighthub-api at 19:20:29Z that added env CHAOS_LLM_DELAY_SECONDS=4 and a /chaos configmap mount, and latency returned to baseline at 19:32:29Z after rollback to the previous ReplicaSet at 19:27:58Z (ALERTS pending 19:22:29Z, firing 19:24:29Z-19:31:29Z).",
+  "root_cause": "Rollout of Deployment insighthub-api at 2026-09-29T19:20:29Z to ReplicaSet insighthub-api-775bb6dfcb (revision 3), whose pod template injected env CHAOS_LLM_DELAY_SECONDS=4, PYTHONPATH=/chaos and a configmap volume chaos-llm-latency (same image insighthub/api:1007430) - an artificial ~4s delay on each LLM call; rolled back at 19:27:58Z to ReplicaSet insighthub-api-776f558c which has none of these.",
+  "confidence": 0.85,
+  "confidence_reason": "Two independent signals agree: application metric (LLM p95 0.2375 -> 4.875, tracks the delay of 4s and reverts after rollback) and Kubernetes signals (Deployment/ReplicaSet events and ReplicaSet spec with the delay env var, plus api available replicas dipping to 0 during rollback). More than two alternative hypotheses were ruled out with metrics. Not higher because the in-pod code path applying the delay was not inspected and the request-rate increase is unexplained.",
+  "hypotheses": [
+    "LLM call p95 latency is at baseline before the incident | bằng chứng: insighthub:llm_call_latency_seconds:p95_5m{} = 0.2375 @ 2026-09-29T19:05:29Z",
+    "LLM call p95 latency became abnormal starting at the first elevated sample (incident onset, shortly after the api rollout at 19:20:29Z) | bằng chứng: insighthub:llm_call_latency_seconds:p95_5m{} = 4.8039136515430405 @ 2026-09-29T19:22:00Z",
+    "LLM call p95 latency peaked at about baseline plus the 4s delay injected in the pod template | bằng chứng: insighthub:llm_call_latency_seconds:p95_5m{} = 4.875 @ 2026-09-29T19:25:30Z",
+    "LLM call p95 latency returned to baseline after the rollback to the previous ReplicaSet (recovery) | bằng chứng: insighthub:llm_call_latency_seconds:p95_5m{} = 0.2375 @ 2026-09-29T19:32:29Z",
+    "RAG query p95 latency is at baseline before the incident | bằng chứng: insighthub:rag_query_latency_seconds:p95_5m{} = 0.095 @ 2026-09-29T19:05:29Z",
+    "RAG query p95 latency rose in step with the LLM latency (chat path includes the LLM call) | bằng chứng: insighthub:rag_query_latency_seconds:p95_5m{} = 4.875 @ 2026-09-29T19:25:30Z",
+    "Kubernetes signal: api Deployment had 1 available replica at baseline | bằng chứng: kube_deployment_status_replicas_available{deployment=\"insighthub-api\"} = 1.0 @ 2026-09-29T19:05:29Z",
+    "Kubernetes signal: api Deployment available replicas dropped to 0 while the pod of the faulty ReplicaSet was replaced by the previous ReplicaSet (rollback at 19:27:58Z per events) | bằng chứng: kube_deployment_status_replicas_available{deployment=\"insighthub-api\"} = 0.0 @ 2026-09-29T19:28:29Z",
+    "Total HTTP request rate rose during the incident relative to baseline (observed, cause not determined) | bằng chứng: insighthub:http_requests:rate5m{} = 0.46653989976460947 @ 2026-09-29T19:26:30Z",
+    "Baseline total HTTP request rate | bằng chứng: insighthub:http_requests:rate5m{} = 0.3004457200623514 @ 2026-09-29T19:05:29Z"
+  ],
+  "ruled_out": [
+    "5xx errors / API failures as cause or symptom: error ratio stayed 0 in the whole window | bằng chứng: insighthub:http_error_ratio:rate5m{} = 0.0 @ 2026-09-29T19:05:29Z",
+    "Queue backlog / Redis: arq queue empty in the whole window | bằng chứng: redis_key_size{key=\"arq:queue\"} = 0.0 @ 2026-09-29T19:05:29Z",
+    "Ingestion worker restart/crash: restart counter unchanged from window start (5.0 at 19:05:29Z) to window end | bằng chứng: kube_pod_container_status_restarts_total{pod=\"insighthub-ingestion-worker-7cb94c96f8-2657d\"} = 5.0 @ 2026-09-29T19:32:59Z",
+    "Postgres restart / DB instability: postgres pod restart counter unchanged at 2.0 through the window end | bằng chứng: kube_pod_container_status_restarts_total{pod=\"insighthub-deps-postgres-0\"} = 2.0 @ 2026-09-29T19:32:59Z",
+    "Node memory exhaustion: available memory stayed about 2.5GB (baseline 2634047488.0, minimum 2545528832.0) | bằng chứng: node_memory_MemAvailable_bytes{pod=\"kube-prom-stack-prometheus-node-exporter-bkcv7\"} = 2545528832.0 @ 2026-09-29T19:30:59Z"
+  ],
+  "unverified": [
+    "Node CPU saturation / CPU throttling of api pods: node idle-derived CPU (0.07-0.17) and container throttling rate queried via query_range but not harvested into samples; need node_cpu_seconds_total and container_cpu_cfs_throttled_periods_total harvested for the incident pods",
+    "Why /chat request rate rose (~0.036/s to ~0.21/s per query_range) during the incident: need per-client/request-source data (client retries vs new load generation)",
+    "Direct DB latency: no DB query latency metric was harvested; need pg_stat_statements or app-level DB timing to fully exclude a slow DB (indirect indicators only: restarts unchanged)",
+    "How the delay is applied inside the api container (code under the /chaos mount): need pod filesystem/code inspection, outside allowed tools",
+    "Exact incident start: 5m-window recording rule lags the true start; per-call latency histogram deltas would pin it to the second"
+  ],
+  "no_data": [],
+  "samples": [
+    {
+      "metric": "insighthub:llm_call_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:05:29Z",
+      "value": 0.2375
+    },
+    {
+      "metric": "insighthub:llm_call_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:22:00Z",
+      "value": 4.8039136515430405
+    },
+    {
+      "metric": "insighthub:llm_call_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:25:30Z",
+      "value": 4.875
+    },
+    {
+      "metric": "insighthub:llm_call_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:32:29Z",
+      "value": 0.2375
+    },
+    {
+      "metric": "insighthub:rag_query_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:05:29Z",
+      "value": 0.095
+    },
+    {
+      "metric": "insighthub:rag_query_latency_seconds:p95_5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:25:30Z",
+      "value": 4.875
+    },
+    {
+      "metric": "insighthub:http_requests:rate5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:26:30Z",
+      "value": 0.46653989976460947
+    },
+    {
+      "metric": "insighthub:http_requests:rate5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:05:29Z",
+      "value": 0.3004457200623514
+    },
+    {
+      "metric": "insighthub:http_error_ratio:rate5m",
+      "labels": {},
+      "timestamp": "2026-09-29T19:05:29Z",
+      "value": 0.0
+    },
+    {
+      "metric": "redis_key_size",
+      "labels": {
+        "container": "redis-exporter",
+        "db": "db0",
+        "endpoint": "metrics",
+        "instance": "10.244.0.19:9121",
+        "job": "insighthub-redis-exporter",
+        "key": "arq:queue",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-redis-exporter-74f8654685-v5r9w",
+        "service": "insighthub-redis-exporter"
+      },
+      "timestamp": "2026-09-29T19:05:29Z",
+      "value": 0.0
+    },
+    {
+      "metric": "kube_pod_container_status_restarts_total",
+      "labels": {
+        "container": "ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-ingestion-worker-7cb94c96f8-2657d",
+        "service": "kube-prom-stack-kube-state-metrics",
+        "uid": "3c18f859-dc13-4d1d-aa78-37ef4605ee0d"
+      },
+      "timestamp": "2026-09-29T19:05:29Z",
+      "value": 5.0
+    },
+    {
+      "metric": "kube_pod_container_status_restarts_total",
+      "labels": {
+        "container": "ingestion-worker",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-ingestion-worker-7cb94c96f8-2657d",
+        "service": "kube-prom-stack-kube-state-metrics",
+        "uid": "3c18f859-dc13-4d1d-aa78-37ef4605ee0d"
+      },
+      "timestamp": "2026-09-29T19:32:59Z",
+      "value": 5.0
+    },
+    {
+      "metric": "kube_pod_container_status_restarts_total",
+      "labels": {
+        "container": "postgres",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "insighthub-deps-postgres-0",
+        "service": "kube-prom-stack-kube-state-metrics",
+        "uid": "a016464a-b854-4aab-a1eb-e16c188d417d"
+      },
+      "timestamp": "2026-09-29T19:32:59Z",
+      "value": 2.0
+    },
+    {
+      "metric": "kube_deployment_status_replicas_available",
+      "labels": {
+        "container": "kube-state-metrics",
+        "deployment": "insighthub-api",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics"
+      },
+      "timestamp": "2026-09-29T19:05:29Z",
+      "value": 1.0
+    },
+    {
+      "metric": "kube_deployment_status_replicas_available",
+      "labels": {
+        "container": "kube-state-metrics",
+        "deployment": "insighthub-api",
+        "endpoint": "http",
+        "instance": "10.244.0.12:8080",
+        "job": "kube-state-metrics",
+        "namespace": "insighthub-local",
+        "pod": "kube-prom-stack-kube-state-metrics-7898bc4bd8-l5npd",
+        "service": "kube-prom-stack-kube-state-metrics"
+      },
+      "timestamp": "2026-09-29T19:28:29Z",
+      "value": 0.0
+    },
+    {
+      "metric": "node_memory_MemAvailable_bytes",
+      "labels": {
+        "container": "node-exporter",
+        "endpoint": "http-metrics",
+        "instance": "172.18.0.2:9100",
+        "job": "node-exporter",
+        "namespace": "monitoring",
+        "pod": "kube-prom-stack-prometheus-node-exporter-bkcv7",
+        "service": "kube-prom-stack-prometheus-node-exporter"
+      },
+      "timestamp": "2026-09-29T19:05:29Z",
+      "value": 2634047488.0
+    },
+    {
+      "metric": "node_memory_MemAvailable_bytes",
+      "labels": {
+        "container": "node-exporter",
+        "endpoint": "http-metrics",
+        "instance": "172.18.0.2:9100",
+        "job": "node-exporter",
+        "namespace": "monitoring",
+        "pod": "kube-prom-stack-prometheus-node-exporter-bkcv7",
+        "service": "kube-prom-stack-prometheus-node-exporter"
+      },
+      "timestamp": "2026-09-29T19:30:59Z",
+      "value": 2545528832.0
+    }
+  ],
+  "tools_used": [
+    "prometheus_query_range",
+    "prometheus_query",
+    "prometheus_list_metrics",
+    "events_list",
+    "pods_list_in_namespace",
+    "resources_list (ReplicaSet)",
+    "resources_get (ReplicaSet insighthub-api-775bb6dfcb, insighthub-api-776f558c)",
+    "scripts/chaos/harvest-samples.py"
+  ],
+  "recommended_actions": [
+    "Keep insighthub-api on ReplicaSet insighthub-api-776f558c (no CHAOS_LLM_DELAY_SECONDS/PYTHONPATH=/chaos/chaos volume) and block promotion of the revision-3 template (tied to hypotheses on LLM p95 4.875 and rollout at 19:20:29Z)",
+    "Add a rollout-diff alert/guard on env changes to api Deployment coinciding with LLM p95 anomalies (tied to hypotheses on kube_deployment_status_replicas_available and onset at 19:22:00Z)",
+    "Investigate the request-rate rise (tied to the http_requests:rate5m hypotheses) before closing"
+  ],
+  "injected_fault": {
+    "name": "llm-latency",
+    "script": "scripts/chaos/inject-llm-latency.sh",
+    "mechanism": "sitecustomize.py mounted from ConfigMap chaos-llm-latency wraps app.services.llm.generate with time.sleep(4); enabled by env CHAOS_LLM_DELAY_SECONDS=4 and PYTHONPATH=/chaos on Deployment insighthub-api (rollout revision 3). The lab runs RAG_MODE=fixture, so this is injected delay, not a slow real provider.",
+    "fault_started_at": "2026-09-29T19:20:29Z",
+    "fault_removed_at": "2026-09-29T19:27:58Z",
+    "traffic_during_fault": "the script drove POST /chat every ~2s (recovery phase every ~5s) on top of the baseline load generator"
+  },
+  "injected_fault_evaluation": {
+    "verdict": "correct",
+    "detail": "The blind investigator identified the api Deployment rollout at 19:20:29Z that added CHAOS_LLM_DELAY_SECONDS=4, PYTHONPATH=/chaos and the chaos-llm-latency ConfigMap, the ~4s delay per LLM call, and the rollback at 19:27:58Z; timings match the script log. Caveats: (1) the fault is self-labelled in the pod spec (env/ConfigMap names), so identification was a spec diff more than inference, and the code path of the delay was not inspected; (2) the unexplained request-rate rise it flagged is the chaos script own traffic driver; (3) the api availability dip to 0 replicas at rollout/rollback is the maxSurge=0 strategy patch needed on this 2-CPU node, not part of the injected fault; (4) CPU throttling was left unverified, not ruled out."
+  },
+  "chaos_window": {
+    "started_at": "2026-09-29T19:20:29Z",
+    "fault_removed_at": "2026-09-29T19:27:58Z",
+    "ended_at": "2026-09-29T19:31:04Z"
+  },
+  "investigation_window_note": "started_at is 15 min before the fault (baseline), ended_at is after the alert resolved; samples must fall inside this window (verify.py:618).",
+  "rca_method": "Independent subagent with no session context and no knowledge of the injected fault; Prometheus MCP + Kubernetes MCP; samples verbatim from scripts/chaos/harvest-samples.py; prompt: observability/rca-prompt.md. hypotheses/ruled_out/samples are unedited subagent output."
+}

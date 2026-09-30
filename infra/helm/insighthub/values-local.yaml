@@ -44,6 +44,14 @@ config:
   ENVIRONMENT: local
 
 api:
+  # Local only (values-dev unchanged): the kind node has ~99% of its CPU requested, so a rolling
+  # update with the default surge leaves the new api pod Pending. Replace in place instead
+  # (one api pod down for ~30 s per rollout). Matches the live `kubectl patch` used during Day 4.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   autoscaling:
     enabled: true
     minReplicas: 1

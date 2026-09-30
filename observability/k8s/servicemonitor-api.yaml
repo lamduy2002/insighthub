@@ -1,0 +1,26 @@
+# Day 4 MH1. Provisional standalone manifest so Prometheus starts accumulating the
+# >=1h baseline (NFR 8.3 #1) immediately; moving this into the insighthub chart is a
+# checklist item.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: insighthub-api
+  namespace: insighthub-local
+  labels:
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: api
+    release: kube-prom-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: insighthub
+      app.kubernetes.io/instance: insighthub
+      app.kubernetes.io/component: api
+  namespaceSelector:
+    matchNames:
+      - insighthub-local
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

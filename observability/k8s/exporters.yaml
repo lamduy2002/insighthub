@@ -1,0 +1,177 @@
+# Day 4 MH1/MH2: datastore exporters for the kind lab.
+# Pods carry app.kubernetes.io/name=insighthub because the local-deps NetworkPolicy
+# (infra/helm/insighthub-local-deps/templates/networkpolicy.yaml) only admits that
+# selector on 5432/6379. Their own component label keeps them out of the app
+# Deployments' selectors. Credentials come from the existing app Secret; nothing
+# is hardcoded. Postgres/Redis are in-cluster and not TLS-enabled, hence sslmode=disable.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insighthub-redis-exporter
+  namespace: insighthub-local
+  labels: &redis-labels
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: redis-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels: *redis-labels
+  template:
+    metadata:
+      labels: *redis-labels
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 59000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.69.0
+          args:
+            # ARQ default queue is the sorted set `arq:queue` (absent when empty -> 0).
+            - --check-single-keys=db0=arq:queue
+            - --check-keys=db0=arq:in-progress:*
+          env:
+            - name: REDIS_ADDR
+              valueFrom:
+                secretKeyRef:
+                  name: insighthub-app-secrets
+                  key: redis_url
+          ports:
+            - name: metrics
+              containerPort: 9121
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: insighthub-redis-exporter
+  namespace: insighthub-local
+  labels:
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: redis-exporter
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9121
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: redis-exporter
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: insighthub-redis
+  namespace: insighthub-local
+  labels:
+    release: kube-prom-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: redis-exporter
+  namespaceSelector:
+    matchNames: [insighthub-local]
+  endpoints:
+    - port: metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insighthub-postgres-exporter
+  namespace: insighthub-local
+  labels: &pg-labels
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels: *pg-labels
+  template:
+    metadata:
+      labels: *pg-labels
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+          env:
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: insighthub-app-secrets
+                  key: database_url
+            - name: DATA_SOURCE_NAME
+              value: $(DB_URL)?sslmode=disable
+          ports:
+            - name: metrics
+              containerPort: 9187
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: insighthub-postgres-exporter
+  namespace: insighthub-local
+  labels:
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/name: insighthub
+    app.kubernetes.io/component: postgres-exporter
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: insighthub-postgres
+  namespace: insighthub-local
+  labels:
+    release: kube-prom-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: postgres-exporter
+  namespaceSelector:
+    matchNames: [insighthub-local]
+  endpoints:
+    - port: metrics
+      interval: 30s
+      scrapeTimeout: 10s
